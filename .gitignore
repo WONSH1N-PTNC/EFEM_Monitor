@@ -1,0 +1,36 @@
+# Visual Studio 캐시 / 사용자 설정
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# 빌드 산출물
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+[Ll]og/
+*.dll
+*.pdb
+*.cache
+
+# NuGet
+packages/
+*.nupkg
+!**/packages/build/
+
+# 테스트 결과
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+
+# 운영 데이터 (로컬 실행 시 생성)
+log/*.db
+log/*.db-wal
+log/*.db-shm
+log/*.csv
+
+# OS
+Thumbs.db
+.DS_Store
