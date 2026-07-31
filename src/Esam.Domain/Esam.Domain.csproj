@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Esam.Domain — 순수 도메인 계층.
+
+    설계 원칙(DESIGN.md 9.1):
+      * 어떤 프로젝트도 참조하지 않는다.
+      * System.IO / System.Net / 시리얼포트 등 하드웨어·환경 의존 API를 사용하지 않는다.
+      * 시간은 IClock 으로만 얻는다 (DateTime.Now 직접 호출 금지) → 테스트 가능성 확보.
+    이 원칙 덕분에 제어 로직 전량을 하드웨어 없이 단위테스트할 수 있다.
+  -->
+  <PropertyGroup>
+    <AssemblyName>Esam.Domain</AssemblyName>
+    <RootNamespace>Esam.Domain</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      net472 를 Windows 외 환경/CI 에서도 빌드할 수 있게 하는 참조 어셈블리 패키지.
+      Visual Studio(Windows)에서는 없어도 되지만, 빌드 서버 이식성을 위해 포함한다.
+    -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

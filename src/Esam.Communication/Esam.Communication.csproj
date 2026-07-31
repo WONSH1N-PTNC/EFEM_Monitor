@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Esam.Communication — 통신 인프라 계층.
+
+    설계 원칙(DESIGN.md 9.1):
+      * Domain 만 참조한다. Services / Hmi 를 역참조하지 않는다.
+      * RS-485 는 반이중이므로 포트당 트랜잭션을 반드시 직렬화한다.
+      * 실제 시리얼 전송(SerialPortModbusTransport)과
+        시뮬레이션 전송(SimulatedModbusTransport)이 동일한 IModbusTransport 를 구현하므로,
+        상위 계층은 하드웨어 유무를 알지 못한다.
+  -->
+  <PropertyGroup>
+    <AssemblyName>Esam.Communication</AssemblyName>
+    <RootNamespace>Esam.Communication</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Esam.Domain\Esam.Domain.csproj" />
+  </ItemGroup>
+
+</Project>

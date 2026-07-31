@@ -1,0 +1,307 @@
+using System.Collections.Generic;
+using Esam.Domain.Alarms;
+using Esam.Domain.Configuration;
+using Esam.Domain.Control;
+using Esam.Domain.Models;
+using Xunit;
+
+namespace Esam.Tests
+{
+    /// <summary>
+    /// DESIGN.md 5.2 인터록 표(IL-01 ~ IL-05)의 동작을 검증한다.
+    /// 안전 기능이므로 정상 동작뿐 아니라 "오동작하지 않는 것"도 함께 검증한다.
+    /// </summary>
+    public class InterlockEvaluatorTests
+    {
+        private static InterlockEvaluator CreateDefault()
+        {
+            return new InterlockEvaluator(InterlockEvaluator.CreateDefaultRules());
+        }
+
+        private static SystemSnapshot SnapshotWithSensor3(double pa, Quality quality = Quality.Good)
+        {
+            Dictionary<string, PressureReading> pressures = new Dictionary<string, PressureReading>();
+            Dictionary<string, ValveState> valves = new Dictionary<string, ValveState>();
+            Dictionary<string, FanState> fans = new Dictionary<string, FanState>();
+
+            for (int i = 1; i <= 5; i++)
+            {
+                // 체인 1의 센서 3만 인자값으로 두고 나머지는 정상 범위(-200 Pa)로 채운다.
+                double value = i == 1 ? pa : -200.0;
+                pressures["S3-" + i] = Build.Pressure("S3-" + i, value, i == 1 ? quality : Quality.Good);
+                valves["V-" + i] = Build.Valve("V-" + i, 2500);
+                fans["F-" + i] = Build.Fan("F-" + i, 1000, 1000);
+            }
+
+            return Build.Snapshot(pressures, valves, fans);
+        }
+
+        // ── IL-01: 센서 3 상한 도달 ─────────────────────────────────────────────
+
+        [Fact]
+        public void IL01_센서3이_상한을_넘으면_해당_체인의_밸브를_닫고_팬을_정지시킨다()
+        {
+            // Sensor3 대역: -200 ± 100 → 상한 -100 Pa. -50 Pa 는 상한 초과.
+            InterlockEvaluation result = CreateDefault().Evaluate(
+                SnapshotWithSensor3(-50.0), Build.Config(), Build.T0);
+
+            Assert.True(result.HasTrip);
+            Assert.False(result.RequiresSystemStop);
+
+            InterlockTrip trip = Assert.Single(result.Trips);
+            Assert.Equal("IL-01", trip.RuleId);
+            Assert.Equal<int>(new[] { 1 }, trip.AffectedChainIds);
+
+            Assert.Equal(2, result.Commands.Count);
+            Assert.Contains(result.Commands, c =>
+                c.Kind == ActuatorCommandKind.CloseValve && c.DeviceId == "V-1");
+            Assert.Contains(result.Commands, c =>
+                c.Kind == ActuatorCommandKind.StopFan && c.DeviceId == "F-1");
+
+            // 모든 인터록 지령은 최우선 순위여야 한다.
+            Assert.All(result.Commands, c => Assert.Equal(CommandPriority.Interlock, c.Priority));
+        }
+
+        [Fact]
+        public void IL01_센서3이_정상범위이면_발동하지_않는다()
+        {
+            InterlockEvaluation result = CreateDefault().Evaluate(
+                SnapshotWithSensor3(-200.0), Build.Config(), Build.T0);
+
+            Assert.False(result.HasTrip);
+            Assert.Empty(result.Commands);
+        }
+
+        [Fact]
+        public void IL01_센서3_품질이_나쁘면_오동작하지_않는다()
+        {
+            // 통신 실패 상태의 값(-50)으로 인터록을 발동시키면 오동작이다.
+            // 이 경우는 알람 P00/P10~P14 가 담당한다.
+            InterlockEvaluation result = CreateDefault().Evaluate(
+                SnapshotWithSensor3(-50.0, Quality.Bad), Build.Config(), Build.T0);
+
+            Assert.False(result.HasTrip);
+        }
+
+        [Fact]
+        public void IL01_비활성_체인은_판정하지_않는다()
+        {
+            ControlConfig config = Build.Config();
+            config.Chains[0].Enabled = false;
+
+            InterlockEvaluation result = CreateDefault().Evaluate(
+                SnapshotWithSensor3(-50.0), config, Build.T0);
+
+            Assert.False(result.HasTrip);
+        }
+
+        // ── IL-02 / IL-03: EMO, 메인 차단기 ─────────────────────────────────────
+
+        [Fact]
+        public void IL02_EMO가_작동하면_전_체인을_정지시킨다()
+        {
+            Dictionary<string, PressureReading> pressures = new Dictionary<string, PressureReading>();
+            SystemSnapshot snapshot = Build.Snapshot(pressures, null, null, Build.Plc(emo: true));
+
+            InterlockEvaluation result = CreateDefault().Evaluate(snapshot, Build.Config(), Build.T0);
+
+            Assert.True(result.RequiresSystemStop);
+            Assert.Contains(result.Trips, t => t.RuleId == "IL-02");
+
+            // 체인 5조 × (밸브 Close + 팬 Stop) = 10건
+            Assert.Equal(10, result.Commands.Count);
+        }
+
+        [Fact]
+        public void IL03_메인차단기_OFF이면_전_체인을_정지시킨다()
+        {
+            SystemSnapshot snapshot = Build.Snapshot(plc: Build.Plc(breakerOff: true));
+
+            InterlockEvaluation result = CreateDefault().Evaluate(snapshot, Build.Config(), Build.T0);
+
+            Assert.True(result.RequiresSystemStop);
+            Assert.Contains(result.Trips, t => t.RuleId == "IL-03");
+        }
+
+        [Fact]
+        public void 전체정지가_발동하면_비활성_체인도_함께_정지시킨다()
+        {
+            // 안전 정지는 예외를 두지 않는다.
+            ControlConfig config = Build.Config();
+            config.Chains[0].Enabled = false;
+            config.Chains[1].Enabled = false;
+
+            InterlockEvaluation result = CreateDefault().Evaluate(
+                Build.Snapshot(plc: Build.Plc(emo: true)), config, Build.T0);
+
+            Assert.Equal(10, result.Commands.Count);
+        }
+
+        // ── IL-04: 통신 상실 ────────────────────────────────────────────────────
+
+        [Fact]
+        public void IL04_PLC_통신이_끊기면_안전입력을_믿을_수_없으므로_전체_정지한다()
+        {
+            SystemSnapshot snapshot = Build.Snapshot(plc: Build.Plc(quality: Quality.Bad));
+
+            InterlockEvaluation result = CreateDefault().Evaluate(snapshot, Build.Config(), Build.T0);
+
+            Assert.True(result.RequiresSystemStop);
+            Assert.Contains(result.Trips, t => t.RuleId == "IL-04");
+        }
+
+        // ── IL-05: 도어 (정책 미확정 → 기본 비활성) ─────────────────────────────
+
+        [Fact]
+        public void IL05_도어_인터록은_정책_미확정이므로_기본_비활성이다()
+        {
+            SystemSnapshot snapshot = Build.Snapshot(plc: Build.Plc(door: true));
+
+            InterlockEvaluation result = CreateDefault().Evaluate(snapshot, Build.Config(), Build.T0);
+
+            Assert.False(result.HasTrip);
+        }
+
+        [Fact]
+        public void IL05_활성화하면_도어_열림에_전체_정지한다()
+        {
+            List<InterlockRule> rules = new List<InterlockRule>(InterlockEvaluator.CreateDefaultRules());
+            foreach (InterlockRule rule in rules)
+            {
+                if (rule.Id == "IL-05")
+                {
+                    rule.Enabled = true;
+                }
+            }
+
+            InterlockEvaluation result = new InterlockEvaluator(rules).Evaluate(
+                Build.Snapshot(plc: Build.Plc(door: true)), Build.Config(), Build.T0);
+
+            Assert.True(result.RequiresSystemStop);
+            Assert.Contains(result.Trips, t => t.RuleId == "IL-05");
+        }
+
+        // ── 래치 / 히스테리시스 (Manual 정책) ───────────────────────────────────
+
+        [Fact]
+        public void IL01은_Manual정책이므로_압력이_회복되어도_Reset전까지_유지된다()
+        {
+            // 원인 확인 없이 자동 재가동되면 안 된다.
+            InterlockEvaluator evaluator = CreateDefault();
+            ControlConfig config = Build.Config();
+
+            evaluator.Evaluate(SnapshotWithSensor3(-50.0), config, Build.T0);
+            Assert.True(evaluator.HasLatched);
+
+            // 압력이 완전히 정상으로 회복되어도 래치는 유지된다.
+            InterlockEvaluation afterRecovery = evaluator.Evaluate(
+                SnapshotWithSensor3(-200.0), config, Build.T0.AddSeconds(10));
+
+            Assert.True(afterRecovery.HasTrip);
+            Assert.Equal(2, afterRecovery.Commands.Count);
+
+            // Reset 후에야 해제된다.
+            evaluator.Reset("IL-01");
+            InterlockEvaluation afterReset = evaluator.Evaluate(
+                SnapshotWithSensor3(-200.0), config, Build.T0.AddSeconds(20));
+
+            Assert.False(afterReset.HasTrip);
+            Assert.False(evaluator.HasLatched);
+        }
+
+        [Fact]
+        public void 래치된_상태에서_센서를_읽을_수_없어도_인터록이_풀리지_않는다()
+        {
+            // 통신이 끊겼다고 안전 정지가 해제되면 위험하다.
+            InterlockEvaluator evaluator = CreateDefault();
+            ControlConfig config = Build.Config();
+
+            evaluator.Evaluate(SnapshotWithSensor3(-50.0), config, Build.T0);
+
+            InterlockEvaluation result = evaluator.Evaluate(
+                SnapshotWithSensor3(-50.0, Quality.Bad), config, Build.T0.AddSeconds(5));
+
+            Assert.True(result.HasTrip);
+            Assert.Equal(2, result.Commands.Count);
+        }
+
+        [Fact]
+        public void Auto정책_인터록은_조건이_해소되면_스스로_해제된다()
+        {
+            // IL-04(통신 상실)는 Auto 정책이다.
+            InterlockEvaluator evaluator = CreateDefault();
+            ControlConfig config = Build.Config();
+
+            Assert.True(evaluator
+                .Evaluate(Build.Snapshot(plc: Build.Plc(quality: Quality.Bad)), config, Build.T0)
+                .RequiresSystemStop);
+
+            InterlockEvaluation recovered = evaluator.Evaluate(
+                Build.Snapshot(plc: Build.Plc()), config, Build.T0.AddSeconds(1));
+
+            Assert.False(recovered.HasTrip);
+            Assert.False(evaluator.HasLatched);
+        }
+
+        [Fact]
+        public void 히스테리시스_구간에서는_Auto정책이어도_해제되지_않는다()
+        {
+            // IL-01 을 Auto 로 바꿔 히스테리시스 동작만 분리 검증한다.
+            // 발동 임계 -100 Pa, ClearHysteresis 20 → 해제 임계 -120 Pa.
+            List<InterlockRule> rules = new List<InterlockRule>(InterlockEvaluator.CreateDefaultRules());
+            foreach (InterlockRule rule in rules)
+            {
+                if (rule.Id == "IL-01")
+                {
+                    rule.ResetPolicy = AlarmResetPolicy.Auto;
+                }
+            }
+
+            InterlockEvaluator evaluator = new InterlockEvaluator(rules);
+            ControlConfig config = Build.Config();
+
+            evaluator.Evaluate(SnapshotWithSensor3(-50.0), config, Build.T0);
+
+            // -110 Pa: 발동 임계(-100)보다는 낮지만 해제 임계(-120)에는 못 미쳤다 → 유지
+            Assert.True(evaluator
+                .Evaluate(SnapshotWithSensor3(-110.0), config, Build.T0.AddSeconds(1)).HasTrip);
+
+            // -130 Pa: 해제 임계를 넘어섰다 → 해제
+            Assert.False(evaluator
+                .Evaluate(SnapshotWithSensor3(-130.0), config, Build.T0.AddSeconds(2)).HasTrip);
+        }
+
+        [Fact]
+        public void IL01_Scope를_System으로_바꾸면_전_체인을_정지시킨다()
+        {
+            List<InterlockRule> rules = new List<InterlockRule>(InterlockEvaluator.CreateDefaultRules());
+            foreach (InterlockRule rule in rules)
+            {
+                if (rule.Id == "IL-01")
+                {
+                    rule.Scope = InterlockScope.System;
+                }
+            }
+
+            InterlockEvaluation result = new InterlockEvaluator(rules).Evaluate(
+                SnapshotWithSensor3(-50.0), Build.Config(), Build.T0);
+
+            Assert.True(result.RequiresSystemStop);
+
+            // 체인 1 개별 지령 2건 + 전 체인 정지 10건
+            Assert.Equal(12, result.Commands.Count);
+        }
+
+        // ── 방어적 동작 ─────────────────────────────────────────────────────────
+
+        [Fact]
+        public void 스냅샷이_null이면_예외_없이_빈_결과를_반환한다()
+        {
+            // 안전 판정기가 예외를 던져 폴링 루프를 중단시키면 안 된다.
+            InterlockEvaluation result = CreateDefault().Evaluate(null, Build.Config(), Build.T0);
+
+            Assert.False(result.HasTrip);
+            Assert.Empty(result.Commands);
+        }
+    }
+}

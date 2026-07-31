@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Esam.Tests — 도메인 계층 단위테스트.
+    Domain 이 하드웨어에 의존하지 않으므로 실장비 없이 제어 알고리즘 전량을 검증할 수 있다.
+  -->
+  <PropertyGroup>
+    <AssemblyName>Esam.Tests</AssemblyName>
+    <RootNamespace>Esam.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+
+    <!-- 테스트 코드에는 XML 문서 주석을 강제하지 않는다 -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.9.0" />
+    <PackageReference Include="xunit" Version="2.7.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.5.7">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Esam.Domain\Esam.Domain.csproj" />
+    <ProjectReference Include="..\Esam.Communication\Esam.Communication.csproj" />
+  </ItemGroup>
+
+</Project>
