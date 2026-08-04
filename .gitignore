@@ -25,6 +25,13 @@ packages/
 *.trx
 *.coverage
 
+# docs 폴더는 .md 문서만 추적한다.
+# 협력사(DSE) 원본 자료(xlsx/pdf)는 CONFIDENTIAL 표기가 있어 저장소에 올리지 않는다.
+# git 히스토리는 한번 푸시하면 제거가 어려우므로 애초에 커밋하지 않는다.
+docs/**
+!docs/**/
+!docs/**/*.md
+
 # 운영 데이터 (로컬 실행 시 생성)
 log/*.db
 log/*.db-wal
