@@ -67,7 +67,7 @@ namespace Esam.Tests
         }
 
         [Fact]
-        public void 1비트라도_바뀌면_Verify가_실패한다()
+        public void 단_1비트라도_바뀌면_Verify가_실패한다()
         {
             byte[] frame = new byte[8];
             frame[0] = 0x01;
@@ -332,7 +332,7 @@ namespace Esam.Tests
         }
 
         [Fact]
-        public void 19200초과에서는_규격_고정값을_사용한다()
+        public void 통신속도_19200초과에서는_규격_고정값을_사용한다()
         {
             Assert.Equal(ModbusTiming.FixedT35Ms, ModbusTiming.InterFrameDelayMs(38400), 6);
             Assert.Equal(ModbusTiming.FixedT15Ms, ModbusTiming.IntraFrameGapMs(115200), 6);
