@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Esam.Domain\Esam.Domain.csproj" />
     <ProjectReference Include="..\Esam.Communication\Esam.Communication.csproj" />
+    <ProjectReference Include="..\Esam.Services\Esam.Services.csproj" />
   </ItemGroup>
 
 </Project>
