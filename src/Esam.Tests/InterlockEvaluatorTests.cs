@@ -26,7 +26,7 @@ namespace Esam.Tests
 
             for (int i = 1; i <= 5; i++)
             {
-                // 체인 1의 센서 3만 인자값으로 두고 나머지는 정상 범위(-200 Pa)로 채운다.
+                // 체인 1의 센서 3만 인자값으로 두고 나머지는 정상 운전점(-200 Pa)으로 채운다.
                 double value = i == 1 ? pa : -200.0;
                 pressures["S3-" + i] = Build.Pressure("S3-" + i, value, i == 1 ? quality : Quality.Good);
                 valves["V-" + i] = Build.Valve("V-" + i, 2500);
@@ -39,11 +39,14 @@ namespace Esam.Tests
         // ── IL-01: 센서 3 상한 도달 ─────────────────────────────────────────────
 
         [Fact]
-        public void IL01_센서3이_상한을_넘으면_해당_체인의_밸브를_닫고_팬을_정지시킨다()
+        public void IL01_센서3이_대기압을_넘으면_해당_체인의_밸브를_닫고_팬을_정지시킨다()
         {
-            // Sensor3 대역: -200 ± 100 → 상한 -100 Pa. -50 Pa 는 상한 초과.
+            // 안전 임계값은 운전 대역과 분리된 절대값 0 Pa(대기압)이다.
+            // 배기 음압을 잃으면 오염이 확산되며, 그것이 IL-01 이 막는 사건이다.
+            // 운전 대역 상한(-100 Pa)을 쓰면 밸브 닫힘 상태(-50 Pa)에서도 조건이 참이 되어
+            // 전원 투입 직후 래치되고 장비가 기동하지 못한다.
             InterlockEvaluation result = CreateDefault().Evaluate(
-                SnapshotWithSensor3(-50.0), Build.Config(), Build.T0);
+                SnapshotWithSensor3(50.0), Build.Config(), Build.T0);
 
             Assert.True(result.HasTrip);
             Assert.False(result.RequiresSystemStop);
@@ -73,12 +76,47 @@ namespace Esam.Tests
         }
 
         [Fact]
+        public void IL01_밸브_닫힘_상태의_압력으로는_발동하지_않는다()
+        {
+            // ★ 회귀 방지. 전원 투입 직후 센서 3 은 -50 Pa 부근이다.
+            // 이 값으로 발동하면 Manual 래치와 겹쳐 장비가 영구히 기동 불가가 된다.
+            // 음압이 유지되는 한 배기 계통에 위험은 없다.
+            InterlockEvaluation result = CreateDefault().Evaluate(
+                SnapshotWithSensor3(-50.0), Build.Config(), Build.T0);
+
+            Assert.False(result.HasTrip);
+            Assert.Empty(result.Commands);
+        }
+
+        [Fact]
+        public void IL01_임계값은_운전_설정_변경에_영향받지_않는다()
+        {
+            // 안전 임계값이 운전 파라미터에서 파생되면, 작업자가 Config 화면에서
+            // 설정값을 바꾸는 것으로 안전 임계값을 움직일 수 있게 된다.
+            //
+            // 이 설정의 대역 상한은 -500 + 100 = -400 Pa 다.
+            // 파생 방식이었다면 정지 상태 압력(-50 Pa)이 -400 Pa 를 넘으므로 즉시 발동했을 것이다.
+            ControlConfig config = Build.Config();
+            config.Modes[SensorMode.Sensor3] = new ModeSetting(-500.0, 100.0, 300.0);
+
+            Assert.Equal(-400.0, config.Modes[SensorMode.Sensor3].HighLimitPa);
+
+            // 임계값은 0 Pa 로 고정이므로 -50 Pa 에서는 발동하지 않는다.
+            Assert.False(CreateDefault()
+                .Evaluate(SnapshotWithSensor3(-50.0), config, Build.T0).HasTrip);
+
+            // 대기압을 넘으면 설정과 무관하게 발동한다.
+            Assert.True(CreateDefault()
+                .Evaluate(SnapshotWithSensor3(50.0), config, Build.T0).HasTrip);
+        }
+
+        [Fact]
         public void IL01_센서3_품질이_나쁘면_오동작하지_않는다()
         {
-            // 통신 실패 상태의 값(-50)으로 인터록을 발동시키면 오동작이다.
+            // 통신 실패 상태의 값(+50)으로 인터록을 발동시키면 오동작이다.
             // 이 경우는 알람 P00/P10~P14 가 담당한다.
             InterlockEvaluation result = CreateDefault().Evaluate(
-                SnapshotWithSensor3(-50.0, Quality.Bad), Build.Config(), Build.T0);
+                SnapshotWithSensor3(50.0, Quality.Bad), Build.Config(), Build.T0);
 
             Assert.False(result.HasTrip);
         }
@@ -90,7 +128,7 @@ namespace Esam.Tests
             config.Chains[0].Enabled = false;
 
             InterlockEvaluation result = CreateDefault().Evaluate(
-                SnapshotWithSensor3(-50.0), config, Build.T0);
+                SnapshotWithSensor3(50.0), config, Build.T0);
 
             Assert.False(result.HasTrip);
         }
@@ -139,15 +177,37 @@ namespace Esam.Tests
 
         // ── IL-04: 통신 상실 ────────────────────────────────────────────────────
 
-        [Fact]
-        public void IL04_PLC_통신이_끊기면_안전입력을_믿을_수_없으므로_전체_정지한다()
+        [Theory]
+        [InlineData(Quality.Bad)]
+        [InlineData(Quality.NoData)]
+        [InlineData(Quality.Stale)]
+        [InlineData(Quality.Uncertain)]
+        public void IL04_PLC_품질이_Good이_아니면_안전입력을_믿을_수_없으므로_전체_정지한다(Quality quality)
         {
-            SystemSnapshot snapshot = Build.Snapshot(plc: Build.Plc(quality: Quality.Bad));
+            // ★ 회귀 방지. 예전에는 Bad 만 검사했다.
+            // 한 번도 응답하지 않은 PLC 는 영구히 NoData 로 남으므로,
+            // Bad 만 보면 EmoActive·MainBreakerOff 가 계속 false 로 읽히고
+            // IL-02·IL-03·IL-05 는 물론 이 규칙 자신까지 전부 무력화된다.
+            SystemSnapshot snapshot = Build.Snapshot(plc: Build.Plc(quality: quality));
 
             InterlockEvaluation result = CreateDefault().Evaluate(snapshot, Build.Config(), Build.T0);
 
             Assert.True(result.RequiresSystemStop);
             Assert.Contains(result.Trips, t => t.RuleId == "IL-04");
+        }
+
+        [Fact]
+        public void IL04_안전입력이_구성되지_않았으면_판정하지_않는다()
+        {
+            // PLC 가 아직 배선되지 않은 단계에서 항상 발동하면 아무것도 검증할 수 없다.
+            // 이 경우 "안전 입력이 없다"는 사실은 런타임 조립 경고로 보고한다.
+            ControlConfig config = Build.Config();
+            config.SafetyInputsConfigured = false;
+
+            InterlockEvaluation result = CreateDefault().Evaluate(
+                Build.Snapshot(plc: Build.Plc(quality: Quality.NoData)), config, Build.T0);
+
+            Assert.False(result.HasTrip);
         }
 
         // ── IL-05: 도어 (정책 미확정 → 기본 비활성) ─────────────────────────────
@@ -190,7 +250,7 @@ namespace Esam.Tests
             InterlockEvaluator evaluator = CreateDefault();
             ControlConfig config = Build.Config();
 
-            evaluator.Evaluate(SnapshotWithSensor3(-50.0), config, Build.T0);
+            evaluator.Evaluate(SnapshotWithSensor3(50.0), config, Build.T0);
             Assert.True(evaluator.HasLatched);
 
             // 압력이 완전히 정상으로 회복되어도 래치는 유지된다.
@@ -216,10 +276,10 @@ namespace Esam.Tests
             InterlockEvaluator evaluator = CreateDefault();
             ControlConfig config = Build.Config();
 
-            evaluator.Evaluate(SnapshotWithSensor3(-50.0), config, Build.T0);
+            evaluator.Evaluate(SnapshotWithSensor3(50.0), config, Build.T0);
 
             InterlockEvaluation result = evaluator.Evaluate(
-                SnapshotWithSensor3(-50.0, Quality.Bad), config, Build.T0.AddSeconds(5));
+                SnapshotWithSensor3(50.0, Quality.Bad), config, Build.T0.AddSeconds(5));
 
             Assert.True(result.HasTrip);
             Assert.Equal(2, result.Commands.Count);
@@ -247,7 +307,7 @@ namespace Esam.Tests
         public void 히스테리시스_구간에서는_Auto정책이어도_해제되지_않는다()
         {
             // IL-01 을 Auto 로 바꿔 히스테리시스 동작만 분리 검증한다.
-            // 발동 임계 -100 Pa, ClearHysteresis 20 → 해제 임계 -120 Pa.
+            // 발동 임계 0 Pa, ClearHysteresis 20 → 해제 임계 -20 Pa.
             List<InterlockRule> rules = new List<InterlockRule>(InterlockEvaluator.CreateDefaultRules());
             foreach (InterlockRule rule in rules)
             {
@@ -260,15 +320,15 @@ namespace Esam.Tests
             InterlockEvaluator evaluator = new InterlockEvaluator(rules);
             ControlConfig config = Build.Config();
 
-            evaluator.Evaluate(SnapshotWithSensor3(-50.0), config, Build.T0);
+            evaluator.Evaluate(SnapshotWithSensor3(50.0), config, Build.T0);
 
-            // -110 Pa: 발동 임계(-100)보다는 낮지만 해제 임계(-120)에는 못 미쳤다 → 유지
+            // -10 Pa: 발동 임계(0)보다는 낮지만 해제 임계(-20)에는 못 미쳤다 → 유지
             Assert.True(evaluator
-                .Evaluate(SnapshotWithSensor3(-110.0), config, Build.T0.AddSeconds(1)).HasTrip);
+                .Evaluate(SnapshotWithSensor3(-10.0), config, Build.T0.AddSeconds(1)).HasTrip);
 
-            // -130 Pa: 해제 임계를 넘어섰다 → 해제
+            // -30 Pa: 해제 임계를 넘어섰다 → 해제
             Assert.False(evaluator
-                .Evaluate(SnapshotWithSensor3(-130.0), config, Build.T0.AddSeconds(2)).HasTrip);
+                .Evaluate(SnapshotWithSensor3(-30.0), config, Build.T0.AddSeconds(2)).HasTrip);
         }
 
         [Fact]
@@ -284,7 +344,7 @@ namespace Esam.Tests
             }
 
             InterlockEvaluation result = new InterlockEvaluator(rules).Evaluate(
-                SnapshotWithSensor3(-50.0), Build.Config(), Build.T0);
+                SnapshotWithSensor3(50.0), Build.Config(), Build.T0);
 
             Assert.True(result.RequiresSystemStop);
 

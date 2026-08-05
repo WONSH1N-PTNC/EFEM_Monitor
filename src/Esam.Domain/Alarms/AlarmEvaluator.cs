@@ -21,6 +21,9 @@ namespace Esam.Domain.Alarms
         private readonly IDictionary<string, AlarmState> _states;
         private readonly IList<AlarmRule> _rules;
 
+        /// <summary>상태 보호용 락. 폴링 스레드와 UI 스레드가 함께 접근한다.</summary>
+        private readonly object _gate = new object();
+
         /// <summary>등록된 규칙 수.</summary>
         public int RuleCount
         {
@@ -68,22 +71,25 @@ namespace Esam.Domain.Alarms
 
             SnapshotValueResolver resolver = new SnapshotValueResolver(snapshot);
 
-            foreach (AlarmRule rule in _rules)
+            lock (_gate)
             {
-                if (!rule.Enabled)
+                foreach (AlarmRule rule in _rules)
                 {
-                    continue;
-                }
+                    if (!rule.Enabled)
+                    {
+                        continue;
+                    }
 
-                AlarmState state = _states[rule.Code];
+                    AlarmState state = _states[rule.Code];
 
-                double value;
-                string detail;
-                bool met = TestCondition(rule, resolver, config, out value, out detail);
+                    double value;
+                    string detail;
+                    bool met = TestCondition(rule, resolver, config, out value, out detail);
 
-                if (state.Update(met, value, detail, nowUtc))
-                {
-                    newlyRaised.Add(state);
+                    if (state.Update(met, value, detail, nowUtc))
+                    {
+                        newlyRaised.Add(state);
+                    }
                 }
             }
 
@@ -98,24 +104,27 @@ namespace Esam.Domain.Alarms
             AlarmSeverity highest = AlarmSeverity.None;
             bool hasUnacknowledged = false;
 
-            foreach (AlarmRule rule in _rules)
+            lock (_gate)
             {
-                AlarmState state = _states[rule.Code];
-                if (!state.IsActive)
+                foreach (AlarmRule rule in _rules)
                 {
-                    continue;
-                }
+                    AlarmState state = _states[rule.Code];
+                    if (!state.IsActive)
+                    {
+                        continue;
+                    }
 
-                activeCodes.Add(rule.Code);
+                    activeCodes.Add(rule.Code);
 
-                if (rule.Severity > highest)
-                {
-                    highest = rule.Severity;
-                }
+                    if (rule.Severity > highest)
+                    {
+                        highest = rule.Severity;
+                    }
 
-                if (!state.IsAcknowledged)
-                {
-                    hasUnacknowledged = true;
+                    if (!state.IsAcknowledged)
+                    {
+                        hasUnacknowledged = true;
+                    }
                 }
             }
 
@@ -134,11 +143,14 @@ namespace Esam.Domain.Alarms
         /// <summary>모든 활성 알람을 확인(Ack) 처리한다.</summary>
         public void AcknowledgeAll()
         {
-            foreach (KeyValuePair<string, AlarmState> pair in _states)
+            lock (_gate)
             {
-                if (pair.Value.IsActive)
+                foreach (KeyValuePair<string, AlarmState> pair in _states)
                 {
-                    pair.Value.Acknowledge();
+                    if (pair.Value.IsActive)
+                    {
+                        pair.Value.Acknowledge();
+                    }
                 }
             }
         }
@@ -149,20 +161,23 @@ namespace Esam.Domain.Alarms
         /// <param name="code">해제할 알람 코드. null 이면 전체.</param>
         public void Reset(string code)
         {
-            if (string.IsNullOrEmpty(code))
+            lock (_gate)
             {
-                foreach (KeyValuePair<string, AlarmState> pair in _states)
+                if (string.IsNullOrEmpty(code))
                 {
-                    pair.Value.Reset();
+                    foreach (KeyValuePair<string, AlarmState> pair in _states)
+                    {
+                        pair.Value.Reset();
+                    }
+
+                    return;
                 }
 
-                return;
-            }
-
-            AlarmState state;
-            if (_states.TryGetValue(code, out state))
-            {
-                state.Reset();
+                AlarmState state;
+                if (_states.TryGetValue(code, out state))
+                {
+                    state.Reset();
+                }
             }
         }
 

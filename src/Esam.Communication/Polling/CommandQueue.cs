@@ -63,19 +63,29 @@ namespace Esam.Communication.Polling
                 // 인터록은 같은 우선순위끼리 병합하지 않는다. 안전 지령은 모두 실행되어야 한다.
                 if (command.Priority != CommandPriority.Interlock)
                 {
-                    RemoveSameTarget(SelectList(command.Priority), command);
+                    RemoveSameKind(SelectList(command.Priority), command);
                 }
 
-                // 더 낮은 우선순위에 남아 있는 같은 대상·같은 종류의 지령은 제거한다.
+                // 더 낮은 우선순위에 남아 있는 같은 장치의 지령은 종류와 무관하게 제거한다.
                 //
                 // 이것이 없으면 다음 순서로 역주행이 발생한다.
                 //   1) 자동 제어가 SetValvePosition(2000) 을 큐에 넣음
                 //   2) 작업자가 수동으로 SetValvePosition(3000) 을 지시
                 //   3) 워커는 Manual 을 먼저 실행(3000) 한 뒤 Automatic 을 실행(2000)
                 //      → 작업자 조작이 낡은 자동 지령에 덮여 밸브가 되돌아간다.
+                //
+                // 종류(Kind)까지 비교하면 안 된다. 이것이 인터록을 무력화하던 결함이었다.
+                //   1) 자동 제어가 SetValvePosition(3200) 을 큐에 넣음
+                //   2) 인터록이 발동해 CloseValve 를 큐에 넣음
+                //   3) Kind 가 다르므로 자동 지령이 남는다
+                //   4) 워커가 인터록(밸브 닫기) → 자동(밸브 3200) 순으로 실행
+                //      → 인터록이 닫은 밸브를 같은 사이클에 다시 연다. 안전 기능의 실효가 0이다.
+                //
+                // 장치 단위로 비교하는 것이 의미상으로도 맞다. 더 높은 권한의 새 지령이
+                // 내려온 장치에 대해 낡은 지령을 실행할 이유는 어떤 경우에도 없다.
                 foreach (List<ActuatorCommand> lower in SelectLowerPriorityLists(command.Priority))
                 {
-                    RemoveSameTarget(lower, command);
+                    RemoveSameDevice(lower, command);
                 }
 
                 SelectList(command.Priority).Add(command);
@@ -194,22 +204,53 @@ namespace Esam.Communication.Polling
             }
         }
 
-        /// <summary>같은 대상·같은 종류의 미처리 지령을 목록에서 제거한다.</summary>
+        /// <summary>
+        /// 같은 장치·같은 종류의 미처리 지령을 제거한다. 같은 우선순위 내 병합에 쓴다.
+        /// </summary>
         /// <param name="target">대상 목록.</param>
         /// <param name="command">기준 지령.</param>
-        private static void RemoveSameTarget(List<ActuatorCommand> target, ActuatorCommand command)
+        /// <remarks>
+        /// 같은 우선순위에서는 종류까지 비교한다. 한 장치에 종류가 다른 지령이
+        /// 연달아 필요한 경우(예: StartFan 후 SetFanRpm)를 지우지 않기 위해서다.
+        /// </remarks>
+        private static void RemoveSameKind(List<ActuatorCommand> target, ActuatorCommand command)
         {
             for (int i = target.Count - 1; i >= 0; i--)
             {
                 ActuatorCommand pending = target[i];
 
-                if (pending.Kind == command.Kind
-                    && string.Equals(pending.DeviceId, command.DeviceId,
-                        StringComparison.OrdinalIgnoreCase))
+                if (pending.Kind == command.Kind && IsSameDevice(pending, command))
                 {
                     target.RemoveAt(i);
                 }
             }
+        }
+
+        /// <summary>
+        /// 같은 장치를 대상으로 하는 미처리 지령을 종류와 무관하게 모두 제거한다.
+        /// 더 낮은 우선순위 목록을 정리할 때 쓴다.
+        /// </summary>
+        /// <param name="target">대상 목록.</param>
+        /// <param name="command">기준 지령.</param>
+        private static void RemoveSameDevice(List<ActuatorCommand> target, ActuatorCommand command)
+        {
+            for (int i = target.Count - 1; i >= 0; i--)
+            {
+                if (IsSameDevice(target[i], command))
+                {
+                    target.RemoveAt(i);
+                }
+            }
+        }
+
+        /// <summary>두 지령이 같은 장치를 대상으로 하는지 판정한다.</summary>
+        /// <param name="left">지령 1.</param>
+        /// <param name="right">지령 2.</param>
+        /// <returns>같은 장치이면 true.</returns>
+        private static bool IsSameDevice(ActuatorCommand left, ActuatorCommand right)
+        {
+            return left.Target == right.Target
+                   && string.Equals(left.DeviceId, right.DeviceId, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>목록의 첫 항목을 꺼낸다.</summary>

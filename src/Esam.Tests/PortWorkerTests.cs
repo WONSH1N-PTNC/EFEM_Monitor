@@ -146,16 +146,35 @@ namespace Esam.Tests
         }
 
         [Fact]
-        public void 인터록_지령은_같은_대상의_하위_우선순위_지령을_제거한다()
+        public void 인터록_지령은_같은_장치의_하위_지령을_종류와_무관하게_제거한다()
         {
+            // ★ 회귀 방지. 종류(Kind)까지 비교하면 인터록의 실효가 0이 된다.
+            // 인터록은 CloseValve, 자동 제어는 SetValvePosition 이라 종류가 다르므로,
+            // 종류로 비교하면 자동 지령이 남아 워커가 밸브를 닫은 직후 다시 연다.
             CommandQueue queue = new CommandQueue();
 
             queue.Enqueue(Valve(2000, CommandPriority.Automatic));
             queue.Enqueue(Valve(3000, CommandPriority.Manual));
+
+            Assert.Equal(1, queue.Count);
+
             queue.Enqueue(ActuatorCommand.CloseValve("V-1", CommandPriority.Interlock, "인터록"));
 
-            // 인터록은 CloseValve, 나머지는 SetValvePosition 이라 종류가 달라 남는다.
-            // 종류가 같은 하위 지령만 제거되는지 확인한다.
+            // 하위 우선순위 지령이 남아 있으면 안 된다.
+            IList<ActuatorCommand> batch = queue.DequeueBatch(0);
+
+            ActuatorCommand only = Assert.Single(batch);
+            Assert.Equal(CommandPriority.Interlock, only.Priority);
+            Assert.Equal(ActuatorCommandKind.CloseValve, only.Kind);
+        }
+
+        [Fact]
+        public void 인터록_지령끼리는_병합하지_않는다()
+        {
+            // 안전 지령은 모두 실행되어야 한다. 같은 장치라도 합치지 않는다.
+            CommandQueue queue = new CommandQueue();
+
+            queue.Enqueue(ActuatorCommand.CloseValve("V-1", CommandPriority.Interlock, "1차"));
             queue.Enqueue(Valve(4000, CommandPriority.Interlock));
 
             IList<ActuatorCommand> batch = queue.DequeueBatch(0);

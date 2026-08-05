@@ -81,6 +81,10 @@ namespace Esam.Tests
             ControlConfig config = new ControlConfig();
             config.ActiveMode = mode;
 
+            // 안전 입력 PLC 가 배선된 상태를 가정한다.
+            // 이 값이 false 면 IL-04(안전 입력 신뢰 불가)가 판정되지 않는다.
+            config.SafetyInputsConfigured = true;
+
             // 팬 사양 미확보 기본값(MaxRpm=0)으로는 증속 테스트가 불가하므로 값을 채운다.
             config.Fan.MaxRpm = 3000.0;
             config.Fan.MinRpm = 0.0;

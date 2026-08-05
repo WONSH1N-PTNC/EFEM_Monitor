@@ -34,6 +34,26 @@ namespace Esam.Domain.Alarms
         /// </summary>
         public double ClearHysteresisPa { get; set; }
 
+        /// <summary>
+        /// 발동 임계값 [Pa]. null 이면 운전 대역의 상한을 폴백으로 사용한다.
+        /// </summary>
+        /// <remarks>
+        /// <para><b>안전 임계값은 운전 파라미터와 분리되어야 하고, 정지 상태를 포함하지 않아야 한다.</b>
+        /// 두 조건 중 하나라도 깨지면 인터록이 성립하지 않는다.</para>
+        /// <para>폴백(운전 대역 상한)은 두 조건을 모두 위반한다.
+        /// 첫째, 작업자가 Config 화면에서 운전 설정값을 바꾸면 안전 임계값도 따라 움직인다.
+        /// 둘째, 센서 3 의 대역 상한 -100 Pa 는 <b>밸브 닫힘 상태의 압력(-50 Pa)보다 아래</b>라서
+        /// 전원 투입 직후 발동 조건이 본래 참이 된다. <see cref="AlarmResetPolicy.Manual"/> 래치와
+        /// 겹치면 장비가 영구히 기동 불가 상태가 된다.</para>
+        /// <para>그래서 이 값은 명시적으로 지정해야 한다. 기본 규칙은 <b>0 Pa</b> 를 쓴다.
+        /// 이는 튜닝값이 아니라 대기압이라는 물리적 경계다. 배기 덕트가 음압을 잃으면
+        /// 오염이 팹으로 확산되며, 그것이 IL-01 이 막으려는 사건이다.
+        /// -100 ~ 0 Pa 구간의 배기 열화는 인터록이 아니라 알람이 담당한다
+        /// (센서 3 이탈 확정 시간이 300초로 잡혀 있는 것도 같은 취지다).</para>
+        /// <para>HW 팀의 배기 계통 사양이 확정되면 재검토한다(DESIGN.md Open Issue #21).</para>
+        /// </remarks>
+        public double? ThresholdPa { get; set; }
+
         /// <summary>기본값으로 초기화한다.</summary>
         public InterlockRule()
         {
@@ -41,6 +61,7 @@ namespace Esam.Domain.Alarms
             Scope = InterlockScope.Chain;
             ResetPolicy = AlarmResetPolicy.Manual;
             ClearHysteresisPa = 0.0;
+            ThresholdPa = null;
         }
     }
 

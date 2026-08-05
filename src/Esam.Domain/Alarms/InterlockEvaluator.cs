@@ -65,6 +65,23 @@ namespace Esam.Domain.Alarms
         /// <summary>래치된 인터록의 키 집합. 키 형식은 "규칙ID" 또는 "규칙ID:체인번호".</summary>
         private readonly HashSet<string> _latched;
 
+        /// <summary>
+        /// 상태 보호용 락.
+        /// </summary>
+        /// <remarks>
+        /// <para>당초 설계는 "폴링 스레드 1개에서만 호출"을 전제했으나, 실제 배선은
+        /// <b>포트마다 워커 스레드가 하나</b>이고 각 워커가 폴링 완료 시점에 판정을 호출한다.
+        /// 즉 3개 스레드가 <see cref="_latched"/> 를 동시에 변형한다.</para>
+        /// <para>이것은 이론적 위험이 아니다. <see cref="HashSet{T}"/> 는 확장 중 동시 삽입에
+        /// 항목을 잃거나 버킷이 깨진다. 래치 항목이 사라지면 발동이 더 이상 보고되지 않아
+        /// 상태머신은 인터록 해제로 판단하고, <b>위험이 남은 채 Ready 로 복귀한다.</b>
+        /// 또 UI 스레드의 <see cref="Reset"/> 이 열거 중인 집합을 수정해
+        /// <see cref="InvalidOperationException"/> 을 던질 수 있다.</para>
+        /// <para>락 경합 비용은 마이크로초 단위이므로 250ms 폴링 예산에 영향이 없다.
+        /// 안전 기능에서 락을 아끼는 것은 잘못된 최적화다.</para>
+        /// </remarks>
+        private readonly object _gate = new object();
+
         /// <summary>인터록 판정기를 생성한다.</summary>
         /// <param name="rules">규칙 목록. null 이면 기본 규칙 집합을 사용한다.</param>
         public InterlockEvaluator(IEnumerable<InterlockRule> rules)
@@ -85,7 +102,68 @@ namespace Esam.Domain.Alarms
         /// <summary>현재 래치되어 있는 인터록이 하나라도 있는지 여부.</summary>
         public bool HasLatched
         {
-            get { return _latched.Count > 0; }
+            get { lock (_gate) { return _latched.Count > 0; } }
+        }
+
+        /// <summary>등록된 규칙 수.</summary>
+        public int RuleCount
+        {
+            get { return _rules.Count; }
+        }
+
+        /// <summary>지정 ID 의 규칙을 찾는다.</summary>
+        /// <param name="ruleId">규칙 ID.</param>
+        /// <returns>규칙. 없으면 null.</returns>
+        public InterlockRule FindRule(string ruleId)
+        {
+            if (string.IsNullOrEmpty(ruleId))
+            {
+                return null;
+            }
+
+            InterlockRule rule;
+            return _rules.TryGetValue(ruleId, out rule) ? rule : null;
+        }
+
+        /// <summary>
+        /// 규칙 구성의 미확정 항목을 수집한다.
+        /// </summary>
+        /// <param name="warnings">경고 목록(출력). 추가된 건수를 세려면 호출 전 개수를 기억해 둔다.</param>
+        /// <remarks>
+        /// 검증 실패가 아니라 <b>경고</b>다. 미확정 상태에서도 폴백값으로 안전 기능은 동작해야 하며,
+        /// 다만 그 사실이 화면과 로그에 드러나야 한다. 조용히 비활성화하는 것이 가장 위험하다.
+        /// </remarks>
+        public void CollectWarnings(IList<string> warnings)
+        {
+            if (warnings == null)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<string, InterlockRule> pair in _rules)
+            {
+                InterlockRule rule = pair.Value;
+
+                if (!rule.Enabled)
+                {
+                    warnings.Add(Format(
+                        "인터록 {0}({1})이 비활성 상태입니다. 안전 기능이 동작하지 않습니다.",
+                        rule.Id, rule.Name));
+
+                    continue;
+                }
+
+                if (string.Equals(rule.Id, "IL-01", StringComparison.OrdinalIgnoreCase)
+                    && !rule.ThresholdPa.HasValue)
+                {
+                    // 이 상태로 운전하면 전원 투입 직후 래치되어 기동이 불가능하다.
+                    // 경고가 아니라 사실상 구성 오류에 가깝다.
+                    warnings.Add(Format(
+                        "인터록 {0} 임계값이 지정되지 않았습니다. 운전 대역 상한을 폴백으로 쓰면 "
+                        + "밸브 닫힘 상태에서 이미 발동 조건이 성립해 기동이 불가능해집니다.",
+                        rule.Id));
+                }
+            }
         }
 
         /// <summary>
@@ -97,6 +175,10 @@ namespace Esam.Domain.Alarms
         {
             List<InterlockRule> rules = new List<InterlockRule>();
 
+            // IL-01 은 자동 운전 중에만 무장한다.
+            // 정지 상태(밸브 닫힘·팬 정지)에서는 센서 3 압력이 대기압 쪽으로 완화되어
+            // 발동 조건이 본래 참이 되므로, 항상 무장하면 전원 투입 직후 래치되어
+            // 장비가 기동 불가 상태가 된다. 그 상태에서는 보호할 대상도 없다.
             rules.Add(new InterlockRule
             {
                 Id = "IL-01",
@@ -104,7 +186,12 @@ namespace Esam.Domain.Alarms
                 Scope = InterlockScope.Chain,
                 Enabled = true,
                 ResetPolicy = AlarmResetPolicy.Manual,
-                ClearHysteresisPa = 20.0
+                ClearHysteresisPa = 20.0,
+
+                // 0 Pa = 대기압. 배기 덕트가 음압을 잃는 순간이 IL-01 이 막으려는 사건이다.
+                // 운전 대역 상한(-100 Pa)을 쓰면 밸브 닫힘 상태(-50 Pa)에서 이미 조건이 참이라
+                // 전원 투입 직후 래치되어 장비가 기동하지 못한다(Open Issue #21).
+                ThresholdPa = 0.0
             });
 
             rules.Add(new InterlockRule
@@ -166,35 +253,48 @@ namespace Esam.Domain.Alarms
                 return new InterlockEvaluation(trips, commands, false);
             }
 
-            // ── IL-02 / IL-03: EMO, 메인 차단기 (최우선) ─────────────────────────
-            // 물리 안전장치이므로 다른 어떤 조건보다 먼저 판정한다.
-            systemStop |= EvaluateSystemRule(
-                "IL-02", snapshot.Plc.EmoActive, "비상정지(EMO) 작동", config, nowUtc, trips);
-
-            systemStop |= EvaluateSystemRule(
-                "IL-03", snapshot.Plc.MainBreakerOff, "메인 차단기 OFF", config, nowUtc, trips);
-
-            // ── IL-05: 도어 열림 (정책 확정 시 활성화) ────────────────────────────
-            systemStop |= EvaluateSystemRule(
-                "IL-05", snapshot.Plc.DoorOpen, "도어 열림", config, nowUtc, trips);
-
-            // ── IL-04: 통신 상실 ──────────────────────────────────────────────────
-            // PLC 품질이 Bad 이면 안전 입력(EMO/차단기) 자체를 신뢰할 수 없으므로 전체 정지한다.
-            systemStop |= EvaluateSystemRule(
-                "IL-04", snapshot.Plc.Quality == Quality.Bad,
-                "PLC 통신 상실 — 안전 입력 판정 불가", config, nowUtc, trips);
-
-            if (systemStop)
+            // 포트마다 워커 스레드가 하나이므로 이 메서드는 동시에 호출된다.
+            // 래치 집합을 보호하지 않으면 발동이 소실되어 위험이 남은 채 Ready 로 복귀한다.
+            lock (_gate)
             {
-                // 전체 정지 시에는 체인별 판정을 생략하고 모든 액추에이터에 정지 지령을 낸다.
-                AppendStopCommands(config.Chains, commands, "인터록: 전 체인 안전 정지");
-                return new InterlockEvaluation(trips, commands, true);
+                // ── IL-02 / IL-03: EMO, 메인 차단기 (최우선) ─────────────────────
+                // 물리 안전장치이므로 다른 어떤 조건보다 먼저 판정한다.
+                systemStop |= EvaluateSystemRule(
+                    "IL-02", snapshot.Plc.EmoActive, "비상정지(EMO) 작동", config, nowUtc, trips);
+
+                systemStop |= EvaluateSystemRule(
+                    "IL-03", snapshot.Plc.MainBreakerOff, "메인 차단기 OFF", config, nowUtc, trips);
+
+                // ── IL-05: 도어 열림 (정책 확정 시 활성화) ────────────────────────
+                systemStop |= EvaluateSystemRule(
+                    "IL-05", snapshot.Plc.DoorOpen, "도어 열림", config, nowUtc, trips);
+
+                // ── IL-04: 안전 입력 신뢰 불가 ────────────────────────────────────
+                // Good 이 아니면 EMO·차단기 판정 자체를 신뢰할 수 없다.
+                // 예전에는 Bad 만 검사했는데, 한 번도 응답하지 않은 PLC 는 영구히 NoData 로 남아
+                // IL-02~IL-05 전부가 무력화되었다. NoData·Stale·Uncertain 도 같이 잡는다.
+                //
+                // 단, PLC 가 아직 구성에 없는 단계에서는 이 규칙이 항상 발동해 아무것도
+                // 검증할 수 없게 된다. 그래서 안전 입력이 구성되어 있을 때만 판정한다.
+                // "구성되지 않았다"는 사실 자체는 런타임 조립 경고로 보고한다.
+                systemStop |= EvaluateSystemRule(
+                    "IL-04",
+                    config.SafetyInputsConfigured && snapshot.Plc.Quality != Quality.Good,
+                    "PLC 통신 상실 — 안전 입력 판정 불가", config, nowUtc, trips);
+
+                if (systemStop)
+                {
+                    // 전체 정지 시에는 체인별 판정을 생략하고 모든 액추에이터에 정지 지령을 낸다.
+                    AppendStopCommands(config.Chains, commands, "인터록: 전 체인 안전 정지");
+                    return new InterlockEvaluation(trips, commands, true);
+                }
+
+                // ── IL-01: 센서 3 상한 도달 (체인 단위) ───────────────────────────
+                bool il01SystemWide =
+                    EvaluateSensor3HighLimit(snapshot, config, nowUtc, trips, commands);
+
+                return new InterlockEvaluation(trips, commands, il01SystemWide);
             }
-
-            // ── IL-01: 센서 3 상한 도달 (체인 단위) ───────────────────────────────
-            bool il01SystemWide = EvaluateSensor3HighLimit(snapshot, config, nowUtc, trips, commands);
-
-            return new InterlockEvaluation(trips, commands, il01SystemWide);
         }
 
         /// <summary>
@@ -276,7 +376,10 @@ namespace Esam.Domain.Alarms
                 return false;
             }
 
-            double tripThreshold = sensor3.HighLimitPa;
+            // 안전 임계값은 규칙에 명시된 값을 쓴다.
+            // 폴백(운전 대역 상한)은 작업자의 Config 조작에 따라 움직이고 정지 상태를 포함하므로
+            // 인터록으로 성립하지 않는다. 기본 규칙은 0 Pa 를 명시한다(Open Issue #21).
+            double tripThreshold = rule.ThresholdPa ?? sensor3.HighLimitPa;
 
             // 채터링 방지: 해제는 발동 임계값보다 히스테리시스만큼 낮아져야 이루어진다.
             double clearThreshold = tripThreshold - Math.Abs(rule.ClearHysteresisPa);
@@ -292,13 +395,14 @@ namespace Esam.Domain.Alarms
                 }
 
                 string key = "IL-01:" + chain.Id.ToString(CultureInfo.InvariantCulture);
+                bool latched = _latched.Contains(key);
 
                 PressureReading reading = snapshot.FindPressure(chain.Sensor3Id);
                 if (reading == null || reading.Quality != Quality.Good)
                 {
                     // 센서 3 을 읽을 수 없으면 새로 발동시킬 수는 없다(오동작 방지).
                     // 다만 이미 래치된 인터록을 값 없음으로 풀어주지도 않는다.
-                    if (_latched.Contains(key))
+                    if (latched)
                     {
                         anyTripped = true;
 
@@ -390,28 +494,33 @@ namespace Esam.Domain.Alarms
         /// <param name="ruleId">해제할 규칙 ID. null 또는 빈 문자열이면 전체 해제.</param>
         public void Reset(string ruleId)
         {
-            if (string.IsNullOrEmpty(ruleId))
+            // UI 스레드에서 호출된다. 락 없이 _latched 를 열거하면
+            // 폴링 스레드의 Add 와 겹쳐 InvalidOperationException 이 발생한다.
+            lock (_gate)
             {
-                _latched.Clear();
-                return;
-            }
-
-            _latched.Remove(ruleId);
-
-            // 체인 단위 래치("IL-01:3")도 함께 제거한다.
-            string prefix = ruleId + ":";
-            List<string> toRemove = new List<string>();
-            foreach (string key in _latched)
-            {
-                if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrEmpty(ruleId))
                 {
-                    toRemove.Add(key);
+                    _latched.Clear();
+                    return;
                 }
-            }
 
-            foreach (string key in toRemove)
-            {
-                _latched.Remove(key);
+                _latched.Remove(ruleId);
+
+                // 체인 단위 래치("IL-01:3")도 함께 제거한다.
+                string prefix = ruleId + ":";
+                List<string> toRemove = new List<string>();
+                foreach (string key in _latched)
+                {
+                    if (key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        toRemove.Add(key);
+                    }
+                }
+
+                foreach (string key in toRemove)
+                {
+                    _latched.Remove(key);
+                }
             }
         }
 

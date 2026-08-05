@@ -56,6 +56,21 @@ namespace Esam.Domain.Configuration
         /// <summary>원시값과 필터값을 함께 로깅할지 여부. Phase 5 튜닝용.</summary>
         public bool LogFilteredAndRaw { get; set; }
 
+        /// <summary>
+        /// 안전 입력(EMO·메인 차단기·도어)을 읽을 PLC 가 구성되어 있는지 여부.
+        /// </summary>
+        /// <remarks>
+        /// <para>IL-04(안전 입력 신뢰 불가)의 판정 여부를 결정한다.
+        /// PLC 가 구성되어 있는데 응답하지 않으면 EMO 판정 자체를 신뢰할 수 없으므로 전체 정지한다.
+        /// 반대로 PLC 가 아직 구성에 없으면 IL-04 가 항상 발동해 어떤 검증도 불가능해진다.</para>
+        /// <para><b>이 값이 false 라는 것은 안전 입력이 하나도 없다는 뜻이다.</b>
+        /// 실장비 운전에서는 있을 수 없는 상태이므로, 런타임 조립 단계에서 반드시
+        /// 구성 경고로 보고해 작업자가 모르고 넘어가지 않게 해야 한다.</para>
+        /// <para>이 값은 통신 구성(device-map)에서 파생되므로 조립 루트가 채운다.
+        /// Domain 이 Communication 을 참조하지 않기 위한 배치다.</para>
+        /// </remarks>
+        public bool SafetyInputsConfigured { get; set; }
+
         /// <summary>ESAM 문서 기준 기본값으로 초기화한다.</summary>
         public ControlConfig()
         {
