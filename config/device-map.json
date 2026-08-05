@@ -1,0 +1,354 @@
+{
+  // ============================================================================
+  // ESAM 통신 구성 — 포트 / 디바이스 종류 / 설치 디바이스
+  //
+  // 근거 문서: docs/COMM_MAP.md, DSE_통신 자료_260710.xlsx
+  //
+  // 주소 표기
+  //   "0x602B"  16진수 (통신자료 표기 그대로 쓸 것을 권장)
+  //   "0"       십진수
+  //   "TBD"     명세 미확정 → 해당 읽기 그룹은 폴링에서 자동 제외되고 경고로 보고됨
+  //
+  // 주의: 알 수 없는 속성명은 로드 오류로 처리된다(오타 방지).
+  // ============================================================================
+  "schemaVersion": "1.0",
+
+  "ports": [
+    {
+      // BUS_A — 차압센서 13 + 온습도 + 풍속 3 + PLC
+      // DESIGN.md 2.2(B): 이 구성으로는 fast 티어가 220~430ms 이므로
+      // 100ms 목표를 맞추려면 차압센서를 3~4개 포트로 분할해야 한다.
+      "serial": {
+        "portId": "BUS_A",
+        "portName": "COM3",
+        "baudRate": 19200,
+        "parity": "None",
+        "dataBits": 8,
+        "stopBits": "One",
+        "responseTimeoutMs": 200,
+        "retryCount": 2,
+        "extraInterFrameDelayMs": 1.0,
+        "toggleRtsForTransmit": false
+      },
+      "polling": { "fastMs": 200, "mediumMs": 1000, "slowMs": 5000 }
+    },
+    {
+      // BUS_B — 스로틀밸브 5 + MFC 2(미정)
+      "serial": {
+        "portId": "BUS_B",
+        "portName": "COM4",
+        "baudRate": 38400,
+        "parity": "None",
+        "dataBits": 8,
+        "stopBits": "One",
+        "responseTimeoutMs": 150,
+        "retryCount": 2,
+        "extraInterFrameDelayMs": 1.0,
+        "toggleRtsForTransmit": false
+      },
+      "polling": { "fastMs": 200, "mediumMs": 1000, "slowMs": 5000 }
+    },
+    {
+      // BUS_C — 송풍팬 5 (2026-07-31 설계 변경: CAN → Modbus 직결)
+      "serial": {
+        "portId": "BUS_C",
+        "portName": "COM5",
+        "baudRate": 38400,
+        "parity": "None",
+        "dataBits": 8,
+        "stopBits": "One",
+        "responseTimeoutMs": 200,
+        "retryCount": 2,
+        "extraInterFrameDelayMs": 1.0,
+        "toggleRtsForTransmit": false
+      },
+      "polling": { "fastMs": 200, "mediumMs": 1000, "slowMs": 5000 }
+    }
+  ],
+
+  "deviceTypes": {
+
+    // ── 차압센서 WTDM-550 ─────────────────────────────────────────────────────
+    // 주소·스케일 모두 잠정값이다. 매뉴얼 4번 확보 후 확정해야 한다.
+    // Int16 지정이 중요하다. 음압(-200 Pa)을 UInt16 으로 읽으면 65336 으로 보인다.
+    "WTDM550": {
+      "driver": "PressureSensor",
+      "readGroups": [
+        {
+          "name": "pressure",
+          "tier": "Fast",
+          "functionCode": 3,
+          "startAddress": "0x0000",
+          "count": 1,
+          "points": [
+            {
+              "key": "pressurePa",
+              "offset": 0,
+              "type": "Int16",
+              "scale": 0.1,
+              "unit": "Pa",
+              // 영점 오프셋·이동평균·레인지 검증을 적용할 주 계측값
+              "applyCalibration": true
+            }
+          ]
+        },
+        {
+          "name": "status",
+          "tier": "Slow",
+          "functionCode": 3,
+          "startAddress": "0x0001",
+          "count": 1,
+          "points": [
+            { "key": "deviceStatus", "offset": 0, "type": "UInt16" }
+          ]
+        }
+      ]
+    },
+
+    // ── 스로틀밸브 (자사 제작, 통신자료 확정 주소) ─────────────────────────────
+    // 0x1003 / 0x2203 의 비트 정의는 미확정(Open Issue #5).
+    "ThrottleValve": {
+      "driver": "ThrottleValve",
+      "readGroups": [
+        {
+          "name": "position",
+          "tier": "Fast",
+          "functionCode": 3,
+          "startAddress": "0x602B",
+          "count": 1,
+          "points": [
+            { "key": "positionPulse", "offset": 0, "type": "UInt16", "unit": "pulse" }
+          ]
+        },
+        {
+          "name": "motionStatus",
+          "tier": "Fast",
+          "functionCode": 3,
+          "startAddress": "0x1003",
+          "count": 1,
+          "points": [
+            { "key": "motionStatus", "offset": 0, "type": "UInt16" }
+          ]
+        },
+        {
+          "name": "alarm",
+          "tier": "Medium",
+          "functionCode": 3,
+          "startAddress": "0x2203",
+          "count": 1,
+          "points": [
+            { "key": "alarmCode", "offset": 0, "type": "UInt16" }
+          ]
+        },
+        {
+          "name": "home",
+          "tier": "Medium",
+          "functionCode": 3,
+          "startAddress": "0x0147",
+          "count": 1,
+          "points": [
+            { "key": "homeDone", "offset": 0, "type": "Bool", "bit": 0, "activeHigh": true }
+          ]
+        }
+      ],
+      "commands": {
+        // 이동은 2단계다: setPosition(0x6202) 후 prMove(0x6002 ← 0x10)
+        "setPosition": { "functionCode": 6, "address": "0x6202", "value": "$arg" },
+        "prMove":      { "functionCode": 6, "address": "0x6002", "value": "0x0010" },
+        "homing":      { "functionCode": 6, "address": "0x6002", "value": "0x0020" },
+        "quickStop":   { "functionCode": 6, "address": "0x6002", "value": "0x0040" },
+        "setVelocity": { "functionCode": 6, "address": "0x6203", "value": "$arg" },
+        "alarmReset":  { "functionCode": 6, "address": "0x1801", "value": "0x1111" }
+      },
+      "conversion": {
+        "pulsePerFullOpen": 5000,
+        "fullOpenDegree": 90.0,
+        "positionTolerancePulse": 20,
+        "moveTimeoutMs": 10000,
+        "homingTimeoutMs": 30000
+      }
+    },
+
+    // ── 송풍팬 (자사 제작, Modbus 직결) ────────────────────────────────────────
+    // 주소 전체가 잠정값이다(Open Issue #9).
+    // COMM_MAP.md 1.3 의 요청대로 현재값·상태를 연속 배치해 트랜잭션 1회로 읽는다.
+    "BlowerFan": {
+      "driver": "ModbusFan",
+      "readGroups": [
+        {
+          "name": "runtime",
+          "tier": "Fast",
+          "functionCode": 3,
+          "startAddress": "0x0000",
+          "count": 2,
+          "points": [
+            { "key": "rpm", "offset": 0, "type": "UInt16", "unit": "RPM" },
+            { "key": "runStatus", "offset": 1, "type": "UInt16" }
+          ]
+        },
+        {
+          "name": "alarm",
+          "tier": "Medium",
+          "functionCode": 3,
+          "startAddress": "0x0010",
+          "count": 1,
+          "points": [
+            { "key": "alarmCode", "offset": 0, "type": "UInt16" }
+          ]
+        }
+      ],
+      "commands": {
+        "setRpm":     { "functionCode": 6, "address": "0x2000", "value": "$arg" },
+        "start":      { "functionCode": 6, "address": "0x2001", "value": "1" },
+        "stop":       { "functionCode": 6, "address": "0x2001", "value": "0" },
+        "alarmReset": { "functionCode": 6, "address": "0x2002", "value": "1" }
+      },
+      "conversion": {
+        // MaxRpm 이 0 이면 자동 제어가 차단된다(Open Issue #20).
+        "minRpm": 0.0,
+        "maxRpm": 0.0,
+        "rpmTolerance": 50.0,
+        "rampTimeoutMs": 15000
+      }
+    },
+
+    // ── LS XBM-DR16S PLC ─────────────────────────────────────────────────────
+    // D 영역 ↔ Modbus 주소 변환 규칙 미확정(Open Issue #18) → TBD 로 둔다.
+    // 극성(activeHigh)도 미확정이다. EMO·차단기는 Fail-Safe 관점에서
+    // "정상 = 1" 이어야 하므로 확인 후 activeHigh 를 조정해야 한다.
+    "LsXbmPlc": {
+      "driver": "Plc",
+      "readGroups": [
+        {
+          // D10 은 1워드다. 9개 비트를 트랜잭션 1회로 읽는다.
+          "name": "digital",
+          "tier": "Fast",
+          "functionCode": 3,
+          "startAddress": "TBD(D10)",
+          "count": 1,
+          "points": [
+            { "key": "di.fanStop0",    "offset": 0, "type": "Bool", "bit": 0, "activeHigh": true },
+            { "key": "di.fanStop1",    "offset": 0, "type": "Bool", "bit": 1, "activeHigh": true },
+            { "key": "di.fanStop2",    "offset": 0, "type": "Bool", "bit": 2, "activeHigh": true },
+            { "key": "di.fanStop3",    "offset": 0, "type": "Bool", "bit": 3, "activeHigh": true },
+            { "key": "di.fanStop4",    "offset": 0, "type": "Bool", "bit": 4, "activeHigh": true },
+            { "key": "di.ctrlBoxFan",  "offset": 0, "type": "Bool", "bit": 5, "activeHigh": true },
+            { "key": "di.emo",         "offset": 0, "type": "Bool", "bit": 6, "activeHigh": true },
+            { "key": "di.door",        "offset": 0, "type": "Bool", "bit": 7, "activeHigh": true },
+            { "key": "di.mainBreaker", "offset": 0, "type": "Bool", "bit": 8, "activeHigh": true }
+          ]
+        },
+        {
+          // D100~D105 연속 6워드를 트랜잭션 1회로 읽는다.
+          "name": "temperatures",
+          "tier": "Medium",
+          "functionCode": 3,
+          "startAddress": "TBD(D100)",
+          "count": 6,
+          "points": [
+            { "key": "temp.fan0",  "offset": 0, "type": "Int16", "scale": 0.1, "unit": "C" },
+            { "key": "temp.fan1",  "offset": 1, "type": "Int16", "scale": 0.1, "unit": "C" },
+            { "key": "temp.fan2",  "offset": 2, "type": "Int16", "scale": 0.1, "unit": "C" },
+            { "key": "temp.fan3",  "offset": 3, "type": "Int16", "scale": 0.1, "unit": "C" },
+            { "key": "temp.fan4",  "offset": 4, "type": "Int16", "scale": 0.1, "unit": "C" },
+            { "key": "temp.panel", "offset": 5, "type": "Int16", "scale": 0.1, "unit": "C" }
+          ]
+        }
+      ]
+    },
+
+    // ── 온습도 THD-R-T ───────────────────────────────────────────────────────
+    // 매뉴얼 3번 미확보 → 주소 TBD.
+    "ThdRt": {
+      "driver": "TempHumidity",
+      "readGroups": [
+        {
+          "name": "ambient",
+          "tier": "Slow",
+          "functionCode": 3,
+          "startAddress": "TBD",
+          "count": 2,
+          "points": [
+            { "key": "temperature", "offset": 0, "type": "Int16", "scale": 0.1, "unit": "C", "applyCalibration": true },
+            { "key": "humidity",    "offset": 1, "type": "Int16", "scale": 0.1, "unit": "%RH", "applyCalibration": true }
+          ]
+        }
+      ]
+    },
+
+    // ── 풍속 BECK985 ─────────────────────────────────────────────────────────
+    // 매뉴얼 1번 미확보 → 주소 TBD.
+    "Beck985": {
+      "driver": "AirVelocity",
+      "readGroups": [
+        {
+          "name": "velocity",
+          "tier": "Slow",
+          "functionCode": 3,
+          "startAddress": "TBD",
+          "count": 1,
+          "points": [
+            { "key": "velocity", "offset": 0, "type": "Int16", "scale": 0.01, "unit": "m/s", "applyCalibration": true }
+          ]
+        }
+      ]
+    }
+  },
+
+  "devices": [
+    // ── BUS_A: 차압센서 13대 ──────────────────────────────────────────────────
+    // 레인지는 품번에 따라 ±750 Pa 또는 ±2000 Pa (Open Issue #17).
+    { "id": "S1-1", "type": "WTDM550", "port": "BUS_A", "slaveId": 1,
+      "rangeMin": -750.0, "rangeMax": 750.0, "offset": 0.0, "filterWindowSize": 5 },
+    { "id": "S1-2", "type": "WTDM550", "port": "BUS_A", "slaveId": 2,
+      "rangeMin": -750.0, "rangeMax": 750.0, "filterWindowSize": 5 },
+    { "id": "S1-3", "type": "WTDM550", "port": "BUS_A", "slaveId": 3,
+      "rangeMin": -750.0, "rangeMax": 750.0, "filterWindowSize": 5 },
+
+    { "id": "S2-1", "type": "WTDM550", "port": "BUS_A", "slaveId": 4,
+      "rangeMin": -750.0, "rangeMax": 750.0, "filterWindowSize": 5 },
+    { "id": "S2-2", "type": "WTDM550", "port": "BUS_A", "slaveId": 5,
+      "rangeMin": -750.0, "rangeMax": 750.0, "filterWindowSize": 5 },
+    { "id": "S2-3", "type": "WTDM550", "port": "BUS_A", "slaveId": 6,
+      "rangeMin": -750.0, "rangeMax": 750.0, "filterWindowSize": 5 },
+    { "id": "S2-4", "type": "WTDM550", "port": "BUS_A", "slaveId": 7,
+      "rangeMin": -750.0, "rangeMax": 750.0, "filterWindowSize": 5 },
+    { "id": "S2-5", "type": "WTDM550", "port": "BUS_A", "slaveId": 8,
+      "rangeMin": -750.0, "rangeMax": 750.0, "filterWindowSize": 5 },
+
+    // 센서 3은 배기 후단이라 -300 Pa 까지 내려간다. ±2.0kPa 품번 검토 필요.
+    { "id": "S3-1", "type": "WTDM550", "port": "BUS_A", "slaveId": 9,
+      "rangeMin": -2000.0, "rangeMax": 2000.0, "filterWindowSize": 5 },
+    { "id": "S3-2", "type": "WTDM550", "port": "BUS_A", "slaveId": 10,
+      "rangeMin": -2000.0, "rangeMax": 2000.0, "filterWindowSize": 5 },
+    { "id": "S3-3", "type": "WTDM550", "port": "BUS_A", "slaveId": 11,
+      "rangeMin": -2000.0, "rangeMax": 2000.0, "filterWindowSize": 5 },
+    { "id": "S3-4", "type": "WTDM550", "port": "BUS_A", "slaveId": 12,
+      "rangeMin": -2000.0, "rangeMax": 2000.0, "filterWindowSize": 5 },
+    { "id": "S3-5", "type": "WTDM550", "port": "BUS_A", "slaveId": 13,
+      "rangeMin": -2000.0, "rangeMax": 2000.0, "filterWindowSize": 5 },
+
+    // ── BUS_A: 부속 센서 및 PLC ───────────────────────────────────────────────
+    { "id": "TH-1",  "type": "ThdRt",    "port": "BUS_A", "slaveId": 15 },
+    { "id": "AV-1",  "type": "Beck985",  "port": "BUS_A", "slaveId": 20 },
+    { "id": "AV-2",  "type": "Beck985",  "port": "BUS_A", "slaveId": 21 },
+    { "id": "AV-3",  "type": "Beck985",  "port": "BUS_A", "slaveId": 22 },
+    { "id": "PLC-1", "type": "LsXbmPlc", "port": "BUS_A", "slaveId": 25 },
+
+    // ── BUS_B: 스로틀밸브 5대 ─────────────────────────────────────────────────
+    { "id": "V-1", "type": "ThrottleValve", "port": "BUS_B", "slaveId": 1 },
+    { "id": "V-2", "type": "ThrottleValve", "port": "BUS_B", "slaveId": 2 },
+    { "id": "V-3", "type": "ThrottleValve", "port": "BUS_B", "slaveId": 3 },
+    { "id": "V-4", "type": "ThrottleValve", "port": "BUS_B", "slaveId": 4 },
+    { "id": "V-5", "type": "ThrottleValve", "port": "BUS_B", "slaveId": 5 },
+
+    // ── BUS_C: 송풍팬 5대 ─────────────────────────────────────────────────────
+    // 슬레이브 ID 1~5 는 잠정값이다(Open Issue #19).
+    // 밸브와 겹치므로 BUS_B 와 반드시 물리적으로 분리되어야 한다.
+    { "id": "F-1", "type": "BlowerFan", "port": "BUS_C", "slaveId": 1 },
+    { "id": "F-2", "type": "BlowerFan", "port": "BUS_C", "slaveId": 2 },
+    { "id": "F-3", "type": "BlowerFan", "port": "BUS_C", "slaveId": 3 },
+    { "id": "F-4", "type": "BlowerFan", "port": "BUS_C", "slaveId": 4 },
+    { "id": "F-5", "type": "BlowerFan", "port": "BUS_C", "slaveId": 5 }
+  ]
+}

@@ -16,6 +16,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      설정 파일(ports.json / device-map.json) 역직렬화용.
+      net472 에서 사실상 표준이며, 주석 허용과 커스텀 변환기(16진수 주소 문자열)를
+      지원해 장비 설정 파일에 적합하다.
+    -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

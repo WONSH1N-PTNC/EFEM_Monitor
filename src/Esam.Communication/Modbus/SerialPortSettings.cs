@@ -58,9 +58,21 @@ namespace Esam.Communication.Modbus
         }
 
         /// <summary>규격 t3.5 와 여유 시간을 합한 실제 적용 무음구간 [ms].</summary>
+        /// <remarks>
+        /// 통신 속도가 아직 설정되지 않은(0) 상태에서도 예외를 던지지 않는다.
+        /// 이 속성은 설정 직렬화 대상이라, 검증 전 객체를 저장할 때도 호출될 수 있다.
+        /// </remarks>
         public double EffectiveInterFrameDelayMs
         {
-            get { return ModbusTiming.InterFrameDelayMs(BaudRate) + Math.Max(0.0, ExtraInterFrameDelayMs); }
+            get
+            {
+                if (BaudRate <= 0)
+                {
+                    return Math.Max(0.0, ExtraInterFrameDelayMs);
+                }
+
+                return ModbusTiming.InterFrameDelayMs(BaudRate) + Math.Max(0.0, ExtraInterFrameDelayMs);
+            }
         }
 
         /// <summary>설정의 유효성을 검증한다.</summary>
