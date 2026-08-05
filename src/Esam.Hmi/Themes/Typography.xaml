@@ -1,0 +1,64 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!--
+        타이포그래피.
+
+        디자인 원안은 'IBM Plex Sans KR' 을 웹폰트로 불러온다.
+        WPF 는 시스템 설치 폰트만 쓰므로, 설치되어 있으면 사용하고
+        없으면 맑은 고딕 → Segoe UI 순으로 대체하도록 폰트 패밀리를 나열한다.
+
+        수치 표시에는 고정폭(Consolas)을 쓴다. 값이 1초에 5번씩 바뀌는 화면에서
+        가변폭 숫자는 자릿수가 변할 때마다 좌우로 흔들려 읽기 어렵다.
+    -->
+
+    <FontFamily x:Key="UiFont">IBM Plex Sans KR, Malgun Gothic, Segoe UI, sans-serif</FontFamily>
+    <FontFamily x:Key="MonoFont">Consolas, D2Coding, Courier New, monospace</FontFamily>
+
+    <!-- 섹션 제목(CHAIN 2-1, TREND 등). 자간을 넓혀 라벨처럼 보이게 한다. -->
+    <Style x:Key="SectionTitleStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+
+    <!-- 미세 라벨(AIRFLOW, EXHAUST, SLAVE 1 등) -->
+    <Style x:Key="MicroLabelStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="9" />
+        <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+    </Style>
+
+    <!-- 상단 네비게이션 항목 -->
+    <Style x:Key="NavItemTextStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+    </Style>
+
+    <!-- 계측 수치(모노스페이스) -->
+    <Style x:Key="ReadoutValueStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style x:Key="ReadoutLabelStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+    </Style>
+
+    <!-- 디바이스 부제(차압센서 WTDM-550 · SLAVE 1) -->
+    <Style x:Key="DeviceSubtitleStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="9" />
+        <Setter Property="Foreground" Value="{StaticResource TextDisabledBrush}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+</ResourceDictionary>

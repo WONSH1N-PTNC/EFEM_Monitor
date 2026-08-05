@@ -6,15 +6,7 @@
     (C# 8 이상 문법(nullable reference type, switch expression, record 등)은 사용 불가)
   -->
   <PropertyGroup>
-    <TargetFramework>net472</TargetFramework>
     <LangVersion>7.3</LangVersion>
-
-    <!-- 경고를 오류로 승격시켜 장비 제어 코드의 잠재 결함을 빌드 단계에서 차단한다 -->
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <WarningsNotAsErrors>CS1591</WarningsNotAsErrors>
-
-    <!-- public 멤버 XML 문서 주석 생성 (사내 코드 규칙: 설명 주석 필수) -->
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
 
     <!--
       소스 파일이 UTF-8(BOM 없음)이므로 컴파일러 코드 페이지를 명시한다.
@@ -28,6 +20,25 @@
     <Product>ESAM - EFEM Smart Airflow and Pressure Management System</Product>
     <Version>0.1.0</Version>
     <NeutralLanguage>ko-KR</NeutralLanguage>
+  </PropertyGroup>
+
+  <!--
+    SDK 스타일 프로젝트 전용 설정.
+
+    Esam.Hmi 는 net472 WPF 이므로 SDK 스타일을 쓸 수 없다.
+    (UseWPF 는 .NET Core 3.0 이상만 지원한다. net472 WPF 는 클래식 csproj 형식이 필요하다.)
+    클래식 프로젝트는 TargetFramework 대신 TargetFrameworkVersion 을 사용하므로
+    두 속성이 동시에 설정되면 빌드가 깨진다. 따라서 이름으로 제외한다.
+  -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' != 'Esam.Hmi'">
+    <TargetFramework>net472</TargetFramework>
+
+    <!-- 경고를 오류로 승격시켜 장비 제어 코드의 잠재 결함을 빌드 단계에서 차단한다 -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>CS1591</WarningsNotAsErrors>
+
+    <!-- public 멤버 XML 문서 주석 생성 (사내 코드 규칙: 설명 주석 필수) -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
 </Project>
