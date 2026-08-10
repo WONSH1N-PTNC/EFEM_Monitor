@@ -231,13 +231,16 @@ namespace Esam.Services
             return _evaluator.FindRule(ruleId);
         }
 
-        /// <summary>등록된 모든 워커에 지령을 투입한다.</summary>
+        /// <summary>담당 워커에 지령을 투입한다.</summary>
         /// <param name="commands">지령 목록.</param>
         /// <remarks>
-        /// 어느 워커가 어느 디바이스를 담당하는지 여기서 따지지 않는다.
-        /// 워커는 자기 포트에 없는 디바이스 지령을 무시하고 <c>CommandFailed</c> 로 알린다.
-        /// 안전 경로에서 라우팅 판단을 하다 실수하는 것보다, 전 포트에 뿌리고
-        /// 담당 워커가 집어가는 편이 확실하다.
+        /// <para><c>RegisterWorker</c> 가 만든 경로표로 담당 워커에만 보낸다(D7).
+        /// 종전에는 전 워커에 뿌리고 자기 포트가 아닌 지령은 워커가 버리게 했는데,
+        /// 그러면 <b>버려진 지령마다 <c>CommandFailed</c> 가 발생</b>해
+        /// 실패 카운터가 정상 운전 중에도 계속 올라갔다. 지령 실패를 감시하려면
+        /// 실패가 진짜 실패일 때만 나와야 한다.</para>
+        /// <para>경로표에 없는 디바이스는 전 워커로 보낸다. 구성이 불완전할 때
+        /// 안전 지령을 아예 못 보내는 것보다는 낫다.</para>
         /// </remarks>
         private void Dispatch(IList<ActuatorCommand> commands)
         {
@@ -252,7 +255,8 @@ namespace Esam.Services
             Dictionary<ModbusPortWorker, List<ActuatorCommand>> byWorker =
                 new Dictionary<ModbusPortWorker, List<ActuatorCommand>>();
 
-            List<ModbusPortWorker> broadcast = null;
+            // 경로표에 없는 장치의 지령. 전 워커로 보낸다.
+            List<ActuatorCommand> broadcast = null;
 
             lock (_gate)
             {
