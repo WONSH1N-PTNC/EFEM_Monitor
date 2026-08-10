@@ -236,15 +236,52 @@ namespace Esam.Tests
             return control;
         }
 
+        /// <summary>
+        /// 제어 설정의 모드별 대역을 센서 13대에 펼쳐 레시피를 만든다.
+        /// </summary>
+        /// <param name="control">제어 설정.</param>
+        /// <returns>테스트용 레시피.</returns>
+        /// <remarks>
+        /// <para>배포용 <c>config/recipe.json</c> 을 그대로 쓰면 테스트가 대역을 조정할 수 없다.
+        /// 반대로 레시피를 아예 주지 않으면 모드별 공통값 경로만 지나고
+        /// <b>센서별 조회 경로를 한 번도 검증하지 않는다.</b></para>
+        /// <para>그래서 테스트가 지정한 대역으로 센서별 레시피를 만들어 넘긴다.
+        /// 의도한 대역을 유지하면서 <c>GetSetting</c> 경로를 실제로 지나간다.</para>
+        /// </remarks>
+        private static RecipeDefinition BuildRecipe(ControlConfig control)
+        {
+            RecipeDefinition recipe = new RecipeDefinition();
+            recipe.Name = "테스트 레시피";
+
+            string[] groups = { "S1-", "S2-", "S3-" };
+            SensorMode[] modes = { SensorMode.Sensor1, SensorMode.Sensor2, SensorMode.Sensor3 };
+            int[] counts = { 3, 5, 5 };
+
+            for (int g = 0; g < groups.Length; g++)
+            {
+                ModeSetting mode = control.GetMode(modes[g]);
+
+                for (int i = 1; i <= counts[g]; i++)
+                {
+                    recipe.Sensors.Add(new SensorSetting(
+                        groups[g] + i, mode.SetpointPa, mode.LowLimitPa, mode.HighLimitPa));
+                }
+            }
+
+            return recipe;
+        }
+
         /// <summary>런타임을 구성한다.</summary>
         private EsamRuntime CreateRuntime(ControlConfig control = null, DeviceMap map = null)
         {
+            ControlConfig resolved = control ?? CreateControl();
+
             RuntimeOptions options = new RuntimeOptions();
             options.Transport = TransportMode.Simulation;
             options.Sensor1Ids = Sensor1Ids;
+            options.Recipe = BuildRecipe(resolved);
 
-            _runtime = EsamRuntime.Create(
-                map ?? CreateMap(), control ?? CreateControl(), options, _clock);
+            _runtime = EsamRuntime.Create(map ?? CreateMap(), resolved, options, _clock);
 
             // 이 구성에는 안전 입력 PLC 가 없어 차단 경고가 뜬다.
             // 테스트는 그 사실을 알고 진행한다는 뜻으로 명시 확인한다.
@@ -405,11 +442,14 @@ namespace Esam.Tests
                 }
             }
 
+            ControlConfig control = CreateControl();
+
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
             options.InterlockRules = rules;
+            options.Recipe = BuildRecipe(control);
 
-            _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            _runtime = EsamRuntime.Create(CreateMap(), control, options, _clock);
 
             Assert.Contains(_runtime.Warnings, w => w.Message.Contains("IL-01"));
         }
@@ -583,10 +623,13 @@ namespace Esam.Tests
         {
             // ★ D10. 종전에는 경고가 있어도 아무 일 없이 자동 운전이 시작됐다.
             // 화면 연결(S7) 전에도 효력이 생기도록 진입 지점에서 막는다.
+            ControlConfig control = CreateControl();
+
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+            options.Recipe = BuildRecipe(control);
 
-            _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            _runtime = EsamRuntime.Create(CreateMap(), control, options, _clock);
             OpenTransports(_runtime);
 
             // 안전 입력 PLC 가 없으므로 차단 경고가 있어야 한다.
@@ -1237,11 +1280,14 @@ namespace Esam.Tests
                 }
             }
 
+            ControlConfig control = CreateControl();
+
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
             options.InterlockRules = rules;
+            options.Recipe = BuildRecipe(control);
 
-            _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            _runtime = EsamRuntime.Create(CreateMap(), control, options, _clock);
             _runtime.AcknowledgeWarnings();
             OpenTransports(_runtime);
 
@@ -1274,11 +1320,14 @@ namespace Esam.Tests
                 }
             }
 
+            ControlConfig control = CreateControl();
+
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
             options.InterlockRules = rules;
+            options.Recipe = BuildRecipe(control);
 
-            _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            _runtime = EsamRuntime.Create(CreateMap(), control, options, _clock);
             _runtime.AcknowledgeWarnings();
             OpenTransports(_runtime);
 
@@ -1298,6 +1347,179 @@ namespace Esam.Tests
 
             // 물리 안전장치 동작 후에는 원점 복귀를 다시 거쳐야 하므로 Fault 로 간다.
             Assert.Equal(SystemPhase.Fault, _runtime.Engine.StateMachine.Phase);
+        }
+
+        // ── C2: 센서별 설정값 (recipe) ──────────────────────────────────────────
+
+        [Fact]
+        public void 센서별로_다른_설정값이_적용된다()
+        {
+            // ★ 종전에는 모드별 공통값을 전 체인이 공유했다.
+            // 배기 저항이 통로마다 다르면 통로별로 다른 설정값이 필요하다.
+            ControlConfig control = CreateControl();
+
+            RecipeDefinition recipe = new RecipeDefinition();
+            recipe.Sensors.Add(new SensorSetting("S2-1", -10.0, -15.0,  -5.0));
+            recipe.Sensors.Add(new SensorSetting("S2-2", -20.0, -25.0, -15.0));
+            recipe.Sensors.Add(new SensorSetting("S2-3", -30.0, -35.0, -25.0));
+            recipe.Sensors.Add(new SensorSetting("S2-4", -40.0, -45.0, -35.0));
+            recipe.Sensors.Add(new SensorSetting("S2-5", -50.0, -55.0, -45.0));
+
+            RuntimeOptions options = new RuntimeOptions();
+            options.Sensor1Ids = Sensor1Ids;
+            options.Recipe = recipe;
+
+            _runtime = EsamRuntime.Create(CreateMap(), control, options, _clock);
+            _runtime.AcknowledgeWarnings();
+            OpenTransports(_runtime);
+
+            PollAll(_runtime);
+
+            ControlStatus status = _runtime.Store.Current.Control;
+
+            Assert.Equal(5, status.Chains.Count);
+            Assert.Equal(-10.0, status.Chains[0].SetpointPa);
+            Assert.Equal(-30.0, status.Chains[2].SetpointPa);
+            Assert.Equal(-50.0, status.Chains[4].SetpointPa);
+        }
+
+        [Fact]
+        public void 비대칭_대역이_제어에_그대로_전달된다()
+        {
+            // recipe 는 상한과 하한을 독립적으로 준다.
+            ControlConfig control = CreateControl();
+
+            RecipeDefinition recipe = new RecipeDefinition();
+
+            for (int i = 1; i <= 5; i++)
+            {
+                // 하한 여유 30 Pa, 상한 여유 5 Pa — 비대칭
+                recipe.Sensors.Add(new SensorSetting("S2-" + i, -10.0, -40.0, -5.0));
+            }
+
+            RuntimeOptions options = new RuntimeOptions();
+            options.Sensor1Ids = Sensor1Ids;
+            options.Recipe = recipe;
+
+            _runtime = EsamRuntime.Create(CreateMap(), control, options, _clock);
+            _runtime.AcknowledgeWarnings();
+            OpenTransports(_runtime);
+
+            PollAll(_runtime);
+
+            ChainStatus chain = _runtime.Store.Current.Control.Chains[0];
+
+            Assert.Equal(-40.0, chain.LowLimitPa);
+            Assert.Equal(-5.0, chain.HighLimitPa);
+        }
+
+        [Fact]
+        public void 레시피에_센서가_빠지면_자동_운전을_거부한다()
+        {
+            // 공통값으로 메우면 그 체인만 조용히 다른 기준으로 제어된다.
+            // 일부 통로만 제어되면서 화면은 정상으로 보이는 상태를 막는다.
+            ControlConfig control = CreateControl();
+
+            RecipeDefinition recipe = new RecipeDefinition();
+
+            // S2-5 를 일부러 빼둔다.
+            for (int i = 1; i <= 4; i++)
+            {
+                recipe.Sensors.Add(new SensorSetting("S2-" + i, -10.0, -15.0, -5.0));
+            }
+
+            RuntimeOptions options = new RuntimeOptions();
+            options.Sensor1Ids = Sensor1Ids;
+            options.Recipe = recipe;
+
+            _runtime = EsamRuntime.Create(CreateMap(), control, options, _clock);
+            _runtime.AcknowledgeWarnings();
+            OpenTransports(_runtime);
+
+            AdvanceToReady(_runtime);
+
+            Assert.False(_runtime.Engine.RequestAuto());
+            Assert.Contains("S2-5", _runtime.Engine.LastAutoRejectReason);
+        }
+
+        [Fact]
+        public void 레시피가_없으면_모드별_공통값으로_동작한다()
+        {
+            // 레시피 도입 전 거동이다. 제어는 성립하므로 막지 않는다.
+            ControlConfig control = CreateControl(-10.0, 5.0, 1.0);
+
+            RuntimeOptions options = new RuntimeOptions();
+            options.Sensor1Ids = Sensor1Ids;
+            options.RecipePath = null;
+
+            _runtime = EsamRuntime.Create(CreateMap(), control, options, _clock);
+            _runtime.AcknowledgeWarnings();
+            OpenTransports(_runtime);
+
+            Assert.Null(_runtime.Control.Recipe);
+
+            PollAll(_runtime);
+
+            // 전 체인이 같은 목표를 공유한다.
+            ControlStatus status = _runtime.Store.Current.Control;
+
+            foreach (ChainStatus chain in status.Chains)
+            {
+                Assert.Equal(-10.0, chain.SetpointPa);
+                Assert.Equal(-15.0, chain.LowLimitPa);
+                Assert.Equal(-5.0, chain.HighLimitPa);
+            }
+        }
+
+        [Fact]
+        public void 레시피가_없으면_구성_경고로_알린다()
+        {
+            // 조용히 넘어가면 통로별로 값을 넣었다고 믿은 채 공통값으로 운전하게 된다.
+            RuntimeOptions options = new RuntimeOptions();
+            options.Sensor1Ids = Sensor1Ids;
+            options.RecipePath = null;
+
+            _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+
+            Assert.Contains(_runtime.Warnings, w => w.Code == "RCP-01");
+        }
+
+        [Fact]
+        public void 센서별_설정으로_각_통로가_다른_압력에_수렴한다()
+        {
+            // 센서별 설정값이 실제로 제어에 반영되는지 종단 검증.
+            // 플랜트는 체인마다 동일한 물리 모델이므로, 수렴점 차이는 설정값 차이에서만 나온다.
+            ControlConfig control = CreateControl();
+
+            RecipeDefinition recipe = new RecipeDefinition();
+            recipe.Sensors.Add(new SensorSetting("S2-1",  -5.0, -10.0,  0.0));
+            recipe.Sensors.Add(new SensorSetting("S2-2", -10.0, -15.0, -5.0));
+            recipe.Sensors.Add(new SensorSetting("S2-3", -15.0, -20.0, -10.0));
+            recipe.Sensors.Add(new SensorSetting("S2-4", -20.0, -25.0, -15.0));
+            recipe.Sensors.Add(new SensorSetting("S2-5", -25.0, -30.0, -20.0));
+
+            RuntimeOptions options = new RuntimeOptions();
+            options.Sensor1Ids = Sensor1Ids;
+            options.Recipe = recipe;
+
+            _runtime = EsamRuntime.Create(CreateMap(), control, options, _clock);
+            _runtime.AcknowledgeWarnings();
+            OpenTransports(_runtime);
+
+            AdvanceToReady(_runtime);
+            Assert.True(_runtime.Engine.RequestAuto());
+
+            RunLoop(_runtime, 400);
+
+            double[] expected = { -5.0, -10.0, -15.0, -20.0, -25.0 };
+
+            for (int i = 0; i < 5; i++)
+            {
+                double truePv;
+                Assert.True(_runtime.Plant.TryGetTruePressure("S2-" + (i + 1), out truePv));
+
+                Assert.InRange(truePv, expected[i] - 5.5, expected[i] + 5.5);
+            }
         }
 
         // ── 자동 제어 ───────────────────────────────────────────────────────────
@@ -1624,11 +1846,14 @@ namespace Esam.Tests
                 Severity = AlarmSeverity.Alarm
             });
 
+            ControlConfig alarmControl = CreateControl();
+
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
             options.AlarmRules = rules;
+            options.Recipe = BuildRecipe(alarmControl);
 
-            _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            _runtime = EsamRuntime.Create(CreateMap(), alarmControl, options, _clock);
             _runtime.AcknowledgeWarnings();
             OpenTransports(_runtime);
 

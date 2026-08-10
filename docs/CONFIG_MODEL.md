@@ -209,12 +209,31 @@ control.modeTimes[mode]   →  TimeMs
 ## 8. 구현 순서
 
 ```
-1. recipe.json 스키마 + 로더 + 검증 1~3            ECID 마스터 확보
-2. ControlConfig 를 센서별 설정값으로 전환          ModeSetting 을 조합 결과로
-   (RecipeService.GetSetting / modeTimes 분리)
-3. alarms.json 66종 재작성 + 검증 4~5              AboveHighLimit / BelowLowLimit
-4. gem-map.json + recipe: 경로 해석 + 검증 6~8      S7 GEM 화면과 함께
+1. recipe.json 스키마 + 로더 + 검증 1~3      ✅ 2026-08-10 (커밋 54b34a5)
+2. ControlConfig 를 센서별 설정값으로 전환    ✅ 2026-08-10
+3. alarms.json 66종 재작성 + 검증 4~5         AboveHighLimit / BelowLowLimit
+4. gem-map.json + recipe: 경로 해석 + 검증 6~8  S7 GEM 화면과 함께
 ```
+
+### 1·2 단계 구현 노트
+
+**`ModeSetting` 은 파일에서 역직렬화되지 않습니다.** `SensorSetting.ToModeSetting(timeSec)` 이 recipe 의 센서별 값과 control 의 모드별 시간을 합쳐 만듭니다. `ChainControlContext` 가 이미 `ModeSetting` 을 받으므로 시그니처 변경이 없었습니다.
+
+**비대칭 대역을 비파괴적으로 추가했습니다.** 4인자 생성자 `(setpoint, low, high, time)` 를 더하고 기존 3인자 `(setpoint, band, time)` 는 그대로 뒀습니다. `BandPa` 는 표시용으로 남아 비대칭일 때 넓은 쪽 편차를 반환합니다.
+
+**`ControlConfig.GetSetting(sensorId, mode)` 가 세 갈래로 나뉩니다.**
+
+| 상황 | 반환 | 이유 |
+|---|---|---|
+| 레시피 없음 | 모드별 공통값 | 레시피 도입 전 거동. 제어는 성립하므로 막지 않는다 |
+| 레시피에 센서 있음 | 센서별 값 + 모드별 시간 | 정상 경로 |
+| 레시피에 센서 없음 | **`null`** | 공통값으로 메우면 그 체인만 조용히 다른 기준으로 제어된다 |
+
+세 번째는 `RequestAuto()` 에서 미리 막습니다. 그대로 자동 운전에 들어가면 **일부 통로만 제어되면서 화면은 정상으로 보입니다.**
+
+**레시피 부재는 차단 경고가 아닙니다.** 모드별 공통값으로 제어가 성립하기 때문입니다. 다만 `RCP-01` 참고 경고로 드러냅니다 — 조용히 넘어가면 통로별로 값을 넣었다고 믿은 채 공통값으로 운전하게 됩니다. 반면 **파일이 있는데 검증에 실패한 경우는 `RCP-03` 차단 경고**입니다. 레시피를 쓰겠다고 선언했는데 참조가 끊어진 상태이므로 구성 오류입니다.
+
+**`DriverNames` 를 Communication 으로 옮겼습니다.** 로더가 `driver` 이름을 알아야 하는데 `PointKeys` 는 Services 에 있어 참조할 수 없었습니다. 문자열을 다시 적으면 같은 계약이 두 곳에 생겨 한쪽만 바뀌었을 때 컴파일러가 잡아주지 못합니다. 설정 파일을 읽는 계층이 Communication 이므로 계약도 그쪽에 둡니다.
 
 1·2 가 3 의 전제입니다. 2 를 건너뛰고 3 부터 하면 `AboveHighLimit` 이 참조할 곳이 없습니다.
 

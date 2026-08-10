@@ -61,6 +61,22 @@ namespace Esam.Services
         /// <summary>인터록 규칙 목록. null 이면 기본 규칙을 사용한다.</summary>
         public IEnumerable<InterlockRule> InterlockRules { get; set; }
 
+        /// <summary>
+        /// 운전 파라미터. null 이면 <see cref="RecipePath"/> 에서 읽는다.
+        /// </summary>
+        /// <remarks>테스트에서 몇 개만 넣고 검증할 때 직접 지정한다.</remarks>
+        public RecipeDefinition Recipe { get; set; }
+
+        /// <summary>
+        /// 레시피 파일 경로. 기본값 <c>config/recipe.json</c>.
+        /// </summary>
+        /// <remarks>
+        /// 읽지 못하면 구성 실패로 막지 않고 <b>모드별 공통값으로 동작</b>한다.
+        /// 레시피 도입 전과 같은 거동이라 제어 자체는 성립하기 때문이다.
+        /// 다만 센서별 설정이 적용되지 않는다는 사실은 구성 경고로 드러낸다.
+        /// </remarks>
+        public string RecipePath { get; set; }
+
         /// <summary>시뮬레이션 난수 시드.</summary>
         public int SimulationSeed { get; set; }
 
@@ -83,6 +99,7 @@ namespace Esam.Services
             Sensor1Ids = new List<string> { "S1-1", "S1-2", "S1-3" };
             SimulationSeed = 20260805;
             AlarmRulesPath = System.IO.Path.Combine("config", "alarms.json");
+            RecipePath = System.IO.Path.Combine("config", "recipe.json");
         }
     }
 
@@ -308,6 +325,10 @@ namespace Esam.Services
                     "device-map.json 에 driver=Plc 디바이스를 추가하고 배선을 확인하십시오."));
             }
 
+            // ── 운전 파라미터 (ECID 마스터) ──────────────────────────────────────
+            // device-map 과 대조해 검증한다. 참조가 끊어지면 그 체인이 제어되지 않는다.
+            control.Recipe = ResolveRecipe(opts, map, runtime._warnings);
+
             // ── 2. 데이터 저장소 ─────────────────────────────────────────────────
             SnapshotBuilder builder = new SnapshotBuilder(map);
             runtime.Store = new DataStore(builder, resolvedClock);
@@ -351,6 +372,69 @@ namespace Esam.Services
             // 상태머신 반영은 이벤트가 아니라 폴링마다 상태를 대조해 수행한다(ReconcileInterlock).
             // 이벤트 구독은 이력·화면용으로만 남긴다.
             return runtime;
+        }
+
+        /// <summary>
+        /// 운전 파라미터를 확정한다. 직접 지정된 것이 있으면 그것을, 없으면 파일을 읽는다.
+        /// </summary>
+        /// <param name="options">런타임 옵션.</param>
+        /// <param name="map">대조할 통신 구성.</param>
+        /// <param name="warnings">구성 경고 목록(출력).</param>
+        /// <returns>운전 파라미터. 확보하지 못하면 null.</returns>
+        /// <remarks>
+        /// <para>읽지 못해도 런타임 구성을 실패시키지 않는다. 레시피가 없으면
+        /// 모드별 공통값으로 동작하며, 그것이 레시피 도입 전 거동이다. 제어는 성립한다.</para>
+        /// <para>다만 <b>센서별 설정이 적용되지 않는다는 사실</b>은 경고로 드러낸다.
+        /// 조용히 넘어가면 Config 화면에서 통로별로 값을 넣었다고 믿은 채
+        /// 실제로는 공통값으로 운전하게 된다.</para>
+        /// <para>파일이 있는데 검증에 실패한 경우는 다르다. 그때는 차단 경고다.
+        /// 레시피를 쓰겠다고 선언했는데 참조가 끊어진 상태이므로 구성 오류다.</para>
+        /// </remarks>
+        private static RecipeDefinition ResolveRecipe(
+            RuntimeOptions options, DeviceMap map, IList<ConfigWarning> warnings)
+        {
+            if (options.Recipe != null)
+            {
+                return options.Recipe;
+            }
+
+            if (string.IsNullOrEmpty(options.RecipePath))
+            {
+                warnings.Add(ConfigWarning.Advisory(
+                    "RCP-01",
+                    "레시피 경로가 지정되지 않아 센서별 설정값 대신 모드별 공통값으로 운전합니다.",
+                    "RuntimeOptions.RecipePath 를 지정하십시오."));
+
+                return null;
+            }
+
+            RecipeLoadResult result = RecipeConfigLoader.LoadFromFile(options.RecipePath, map);
+
+            foreach (string warning in result.Warnings)
+            {
+                warnings.Add(ConfigWarning.Advisory("RCP-02", warning, null));
+            }
+
+            if (result.IsSuccess)
+            {
+                return result.Recipe;
+            }
+
+            foreach (string error in result.Errors)
+            {
+                warnings.Add(ConfigWarning.Blocking(
+                    "RCP-03", "레시피 오류: " + error, "config/recipe.json 을 확인하십시오."));
+            }
+
+            warnings.Add(ConfigWarning.Advisory(
+                "RCP-01",
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "레시피를 읽지 못해({0}) 모드별 공통값으로 운전합니다.",
+                    options.RecipePath),
+                null));
+
+            return null;
         }
 
         /// <summary>

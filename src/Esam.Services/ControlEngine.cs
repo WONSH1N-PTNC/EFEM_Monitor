@@ -138,14 +138,18 @@ namespace Esam.Services
         public ControlStatus BuildStatus()
         {
             List<ChainStatus> chains = new List<ChainStatus>();
-            ModeSetting mode = ResolveMode();
+            SystemSnapshot snapshot = _store.Current;
 
             foreach (ChainRuntime runtime in _runtimes)
             {
-                double pv = 0.0;
+                string sensorId = ResolveSensorId(runtime.Definition);
 
-                SystemSnapshot snapshot = _store.Current;
-                PressureReading reading = snapshot.FindPressure(ResolveSensorId(runtime.Definition));
+                // 화면에 표시할 목표·상하한도 센서별이다. 공통값을 보여주면
+                // 작업자가 실제 적용값과 다른 숫자를 보게 된다.
+                ModeSetting mode = _config.GetSetting(sensorId, _config.ActiveMode);
+
+                double pv = 0.0;
+                PressureReading reading = snapshot.FindPressure(sensorId);
 
                 if (reading != null)
                 {
@@ -157,9 +161,9 @@ namespace Esam.Services
                     runtime.Definition.Name,
                     runtime.LastResult,
                     pv,
-                    mode.SetpointPa,
-                    mode.LowLimitPa,
-                    mode.HighLimitPa,
+                    mode == null ? 0.0 : mode.SetpointPa,
+                    mode == null ? 0.0 : mode.LowLimitPa,
+                    mode == null ? 0.0 : mode.HighLimitPa,
                     runtime.DeviationElapsedMs));
             }
 
@@ -282,7 +286,6 @@ namespace Esam.Services
             }
 
             SystemSnapshot snapshot = _store.Current;
-            ModeSetting mode = ResolveMode();
             DateTime nowUtc = _clock.UtcNow;
 
             List<ActuatorCommand> commands = new List<ActuatorCommand>();
@@ -297,6 +300,18 @@ namespace Esam.Services
                 }
 
                 string sensorId = ResolveSensorId(definition);
+
+                // 설정값은 센서별이다. 레시피가 있으면 그 센서의 값을, 없으면 모드별 공통값을 쓴다.
+                ModeSetting mode = _config.GetSetting(sensorId, _config.ActiveMode);
+
+                if (mode == null)
+                {
+                    // 레시피에 이 센서가 없다. 공통값으로 메우면 이 체인만 조용히
+                    // 다른 기준으로 제어되므로 건너뛴다. 사유는 결과에 남는다.
+                    runtime.SetResult(ControlResult.Skipped);
+                    continue;
+                }
+
                 PressureReading reading = snapshot.FindPressure(sensorId);
 
                 double pv;
@@ -532,6 +547,14 @@ namespace Esam.Services
                 return false;
             }
 
+            string missingSettings = CheckSettingsAvailable();
+
+            if (missingSettings != null)
+            {
+                LastAutoRejectReason = missingSettings;
+                return false;
+            }
+
             Func<string> guard = AutoEntryGuard;
 
             if (guard != null)
@@ -613,10 +636,44 @@ namespace Esam.Services
             }
         }
 
-        /// <summary>적용 중인 모드 설정을 가져온다.</summary>
-        private ModeSetting ResolveMode()
+
+        /// <summary>
+        /// 자동 운전 진입 전에 전 체인의 설정값이 확보되었는지 확인한다.
+        /// </summary>
+        /// <returns>모두 확보되었으면 null, 아니면 거부 사유.</returns>
+        /// <remarks>
+        /// 레시피에 센서가 빠져 있으면 그 체인은 제어되지 않는다. 그 상태로 자동 운전에
+        /// 들어가면 일부 통로만 제어되면서 화면은 정상으로 보인다.
+        /// 진입 전에 막는 편이 낫다.
+        /// </remarks>
+        private string CheckSettingsAvailable()
         {
-            return _config.GetMode(_config.ActiveMode);
+            List<string> missing = new List<string>();
+
+            foreach (ChainRuntime runtime in _runtimes)
+            {
+                if (!runtime.Definition.Enabled)
+                {
+                    continue;
+                }
+
+                string sensorId = ResolveSensorId(runtime.Definition);
+
+                if (_config.GetSetting(sensorId, _config.ActiveMode) == null)
+                {
+                    missing.Add(sensorId);
+                }
+            }
+
+            if (missing.Count == 0)
+            {
+                return null;
+            }
+
+            return string.Format(
+                CultureInfo.InvariantCulture,
+                "레시피에 설정값이 없는 센서가 있어 해당 체인을 제어할 수 없습니다: {0}",
+                string.Join(", ", missing.ToArray()));
         }
 
         /// <summary>체인이 참조할 센서 ID 를 결정한다.</summary>

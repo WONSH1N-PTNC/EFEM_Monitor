@@ -94,10 +94,59 @@ namespace Esam.Domain.Configuration
             Chains = new List<ChainDefinition>();
         }
 
+        /// <summary>
+        /// 운전 파라미터. <c>recipe.json</c> 에서 로드해 조립 루트가 주입한다. null 이면 모드별 공통값을 쓴다.
+        /// </summary>
+        /// <remarks>
+        /// <para>이 필드는 <c>control.json</c> 에서 역직렬화되지 않는다. 두 파일은 역할이 다르고
+        /// 바꾸는 빈도도 다르므로 따로 로드해 여기서 합친다.</para>
+        /// <para><b>null 이면 종전처럼 모드별 공통값으로 동작한다.</b> 레시피 도입 전 구성과
+        /// 기존 테스트가 그대로 통과하도록 남긴 이행 경로다. 조립 루트가 이 사실을 구성 경고로 올린다.
+        /// 조용히 넘어가면 센서별 설정을 넣었다고 착각한 채 공통값으로 운전하게 된다.</para>
+        /// </remarks>
+        public RecipeDefinition Recipe { get; set; }
+
+        /// <summary>
+        /// 지정 센서의 제어 파라미터를 가져온다. 레시피의 센서별 값과 모드별 시간을 합친다.
+        /// </summary>
+        /// <param name="sensorId">제어 기준 센서의 디바이스 ID.</param>
+        /// <param name="mode">센서 모드. 이탈 확정 시간을 여기서 가져온다.</param>
+        /// <returns>제어 파라미터. 레시피가 있는데 해당 센서가 없으면 null.</returns>
+        /// <remarks>
+        /// <para>세 갈래로 나뉜다.</para>
+        /// <list type="number">
+        ///   <item><description><b>레시피 없음</b> → 모드별 공통값. 레시피 도입 전 동작이다</description></item>
+        ///   <item><description><b>레시피에 센서 있음</b> → 센서별 값 + 모드별 시간</description></item>
+        ///   <item><description><b>레시피에 센서 없음</b> → <c>null</c></description></item>
+        /// </list>
+        /// <para>세 번째에서 공통값으로 대체하지 않는 이유가 있다. 레시피를 도입한 구성에서
+        /// 센서 하나가 빠졌다면 그것은 설정 오류다. 공통값으로 메우면 <b>그 체인만 조용히
+        /// 다른 기준으로 제어</b>되고, 화면에는 레시피 값이 적용된 것처럼 보인다.
+        /// 로드 검증이 먼저 걸러야 하고, 그래도 새면 여기서 드러나야 한다.</para>
+        /// </remarks>
+        public ModeSetting GetSetting(string sensorId, SensorMode mode)
+        {
+            ModeSetting common = GetMode(mode);
+
+            if (Recipe == null)
+            {
+                return common;
+            }
+
+            SensorSetting sensor = Recipe.Find(sensorId);
+
+            return sensor == null ? null : sensor.ToModeSetting(common.TimeSec);
+        }
+
         /// <summary>지정한 센서 모드의 파라미터를 가져온다.</summary>
         /// <param name="mode">센서 모드.</param>
         /// <returns>해당 모드의 파라미터.</returns>
         /// <exception cref="InvalidOperationException">해당 모드의 설정이 없을 때.</exception>
+        /// <remarks>
+        /// 모드별 공통값이다. 레시피 도입 후 이 값에서 실제로 쓰이는 것은
+        /// <b>이탈 확정 시간(Time)뿐</b>이며, 설정값·상하한은 <see cref="GetSetting"/> 이
+        /// 레시피에서 가져온다. 레시피가 없는 구성에서는 전체가 폴백으로 쓰인다.
+        /// </remarks>
         public ModeSetting GetMode(SensorMode mode)
         {
             ModeSetting setting;
