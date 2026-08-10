@@ -151,14 +151,47 @@ namespace Esam.Tests
         }
 
         [Fact]
-        public void IL03_메인차단기_OFF이면_전_체인을_정지시킨다()
+        public void IL03_메인차단기_인터록은_입력이_미배선이라_기본_비활성이다()
         {
+            // IO List_260801.xlsx 의 디지털 입력 8점에 메인 차단기 접점이 없다.
+            // 규칙을 켜 두면 항상 false 를 읽어 "정상"으로 보고하므로,
+            // 구현되어 동작 중이라는 착각을 준다.
             SystemSnapshot snapshot = Build.Snapshot(plc: Build.Plc(breakerOff: true));
 
             InterlockEvaluation result = CreateDefault().Evaluate(snapshot, Build.Config(), Build.T0);
 
+            Assert.False(result.HasTrip);
+        }
+
+        [Fact]
+        public void IL03_활성화하면_메인차단기_OFF에_전체_정지한다()
+        {
+            // 배선이 추가되면 Enabled 만 켜서 쓸 수 있어야 한다.
+            List<InterlockRule> rules = new List<InterlockRule>(InterlockEvaluator.CreateDefaultRules());
+            foreach (InterlockRule rule in rules)
+            {
+                if (rule.Id == "IL-03")
+                {
+                    rule.Enabled = true;
+                }
+            }
+
+            InterlockEvaluation result = new InterlockEvaluator(rules).Evaluate(
+                Build.Snapshot(plc: Build.Plc(breakerOff: true)), Build.Config(), Build.T0);
+
             Assert.True(result.RequiresSystemStop);
             Assert.Contains(result.Trips, t => t.RuleId == "IL-03");
+        }
+
+        [Fact]
+        public void 미배선_인터록은_구성_경고로_보고된다()
+        {
+            // 조용히 비활성화하는 것이 가장 위험하다. 반드시 드러나야 한다.
+            List<string> warnings = new List<string>();
+            CreateDefault().CollectWarnings(warnings);
+
+            Assert.Contains(warnings, w => w.Contains("IL-03"));
+            Assert.Contains(warnings, w => w.Contains("IL-05"));
         }
 
         [Fact]

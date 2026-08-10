@@ -12,10 +12,10 @@ namespace Esam.Communication.Simulation
     public sealed class SimulatedPressureSensor : SimulatedSlaveBase
     {
         /// <summary>압력값 레지스터 주소(잠정).</summary>
-        public const ushort PressureRegister = 0x0000;
+        public const ushort PressureRegister = 0x4001;
 
         /// <summary>장치 상태 레지스터 주소(잠정).</summary>
-        public const ushort StatusRegister = 0x0001;
+        public const ushort StatusRegister = 0x4002;
 
         /// <summary>1 LSB 당 압력 [Pa] (잠정: 0.1 Pa/LSB).</summary>
         public const double PaPerLsb = 0.1;
@@ -246,22 +246,22 @@ namespace Esam.Communication.Simulation
     public sealed class SimulatedBlowerFan : SimulatedSlaveBase
     {
         /// <summary>현재 회전수 레지스터(잠정).</summary>
-        public const ushort CurrentRpmRegister = 0x0000;
+        public const ushort CurrentRpmRegister = 0x4041;
 
         /// <summary>운전 상태 레지스터(잠정). 0 = 정지, 1 = 가감속, 2 = 정속.</summary>
-        public const ushort RunStatusRegister = 0x0001;
+        public const ushort RunStatusRegister = 0x4037;
 
         /// <summary>알람 코드 레지스터(잠정).</summary>
-        public const ushort AlarmRegister = 0x0010;
+        public const ushort AlarmRegister = 0x4042;
 
         /// <summary>목표 회전수 설정 레지스터(잠정).</summary>
-        public const ushort RpmSetRegister = 0x2000;
+        public const ushort RpmSetRegister = 0x4006;
 
         /// <summary>기동/정지 명령 레지스터(잠정). 1 = 기동, 0 = 정지.</summary>
-        public const ushort RunCommandRegister = 0x2001;
+        public const ushort RunCommandRegister = 0x4034;
 
         /// <summary>알람 리셋 레지스터(잠정).</summary>
-        public const ushort AlarmResetRegister = 0x2002;
+        public const ushort AlarmResetRegister = 0x4043;
 
         /// <summary>도달 판정 허용오차 [RPM].</summary>
         private const double RpmTolerance = 10.0;

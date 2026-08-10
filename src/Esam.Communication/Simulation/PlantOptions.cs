@@ -100,7 +100,8 @@ namespace Esam.Communication.Simulation
             ValveSlewPulsePerSec = 1000.0;
             FanRampRpmPerSec = 500.0;
             ValveFullOpenPulse = 5000;
-            FanMaxRpm = 3000.0;
+            // JKBLD300V2 폐루프 설정 상한(0x4006). 드라이버 전기 사양 20000 이 아니다.
+            FanMaxRpm = 4000.0;
         }
 
         /// <summary>노이즈를 모두 0 으로 만든 설정을 반환한다. 결정적 수렴 테스트용.</summary>

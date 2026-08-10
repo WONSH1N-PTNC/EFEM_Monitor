@@ -81,8 +81,16 @@ namespace Esam.Domain.Configuration
     /// 송풍팬 구동 파라미터. control.json 의 <c>actuator.fan</c> 에 대응한다.
     /// </summary>
     /// <remarks>
-    /// <see cref="MaxRpm"/> 은 팬 사양 미확보 상태이며(DESIGN.md Open Issue #20),
-    /// 0 인 상태로는 증속 제어가 불가능하므로 자동 제어 진입을 차단한다.
+    /// <para>기본값은 JKBLD300V2 드라이버의 <b>폐루프 속도 설정 레지스터(0x4006)</b>
+    /// 유효 범위인 200~4000 rpm 이다(2026-08-10 확정, Open Issue #20).</para>
+    /// <para>드라이버 전기 사양표의 "Motor speed range 0~20000 rpm" 을 그대로 쓰면 안 된다.
+    /// 그것은 드라이버가 어떤 모터든 구동할 수 있는 한계이지 Modbus 로 설정 가능한
+    /// 범위가 아니다. 4000 을 넘는 값을 쓰면 드라이버가 받지 않으므로,
+    /// 밴드 제어는 도달하지 못하는 목표를 향해 계속 증속 지령을 내게 된다.</para>
+    /// <para><see cref="MinRpm"/> 이 0 이 아니라 200 인 점도 중요하다.
+    /// 200 rpm 미만은 설정할 수 없으므로 "정지"는 속도 0 지령이 아니라
+    /// 별도의 정지 명령(0x4034 = 0)으로 수행해야 한다.</para>
+    /// <para><see cref="MaxRpm"/> 이 0 이면 증속 제어가 불가능하므로 자동 제어 진입을 차단한다.</para>
     /// </remarks>
     public sealed class FanActuatorConfig
     {
@@ -111,10 +119,14 @@ namespace Esam.Domain.Configuration
         public FanActuatorConfig()
         {
             StepRpm = 100.0;
-            MinRpm = 0.0;
-            MaxRpm = 0.0;
+
+            // JKBLD300V2 폐루프 속도 설정(0x4006) 유효 범위
+            MinRpm = 200.0;
+            MaxRpm = 4000.0;
             DwellMs = 1000;
-            OffBelowRpm = 100.0;
+
+            // 최소 설정 회전수 미만은 지령할 수 없으므로 정지 명령으로 전환한다.
+            OffBelowRpm = 200.0;
             RpmTolerance = 50.0;
             RampTimeoutMs = 15000;
         }

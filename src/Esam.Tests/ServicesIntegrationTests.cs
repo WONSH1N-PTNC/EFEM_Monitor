@@ -51,7 +51,8 @@ namespace Esam.Tests
         // ── 구성 도우미 ─────────────────────────────────────────────────────────
 
         /// <summary>
-        /// 통합 테스트용 구성을 만든다. 차압센서 13대 + 밸브 5대 + 팬 5대를 3개 포트에 배치한다.
+        /// 통합 테스트용 구성을 만든다. IO List_260801.xlsx 의 2채널 구성을 따른다.
+        /// CH1 에 차압센서 13대, CH2 에 밸브 5대(ID 1~5) + 블로워 5대(ID 6~10).
         /// </summary>
         /// <remarks>
         /// 레지스터 주소는 <see cref="SimulatedPressureSensor"/> 등 시뮬레이션 슬레이브가
@@ -61,11 +62,10 @@ namespace Esam.Tests
         {
             DeviceMap map = new DeviceMap();
 
-            map.Ports.Add(CreatePort("BUS_A", "COM3", 19200));
-            map.Ports.Add(CreatePort("BUS_B", "COM4", 38400));
-            map.Ports.Add(CreatePort("BUS_C", "COM5", 38400));
+            map.Ports.Add(CreatePort("CH1", "COM3", 19200));
+            map.Ports.Add(CreatePort("CH2", "COM4", 38400));
 
-            map.DeviceTypes["WTDM550"] = CreateSensorType();
+            map.DeviceTypes["DiffPressure"] = CreateSensorType();
             map.DeviceTypes["ThrottleValve"] = CreateValveType();
             map.DeviceTypes["BlowerFan"] = CreateFanType();
 
@@ -81,8 +81,8 @@ namespace Esam.Tests
                 map.Devices.Add(new DeviceInstanceDefinition
                 {
                     Id = sensorIds[i],
-                    Type = "WTDM550",
-                    Port = "BUS_A",
+                    Type = "DiffPressure",
+                    Port = "CH1",
                     SlaveId = (byte)(i + 1),
                     RangeMin = -2000.0,
                     RangeMax = 2000.0,
@@ -92,16 +92,18 @@ namespace Esam.Tests
                 });
             }
 
+            // 밸브와 블로워가 같은 버스를 공유하므로 슬레이브 ID 가 겹치면 안 된다.
+            // IO List 기준 밸브 1~5, 블로워 6~10.
             for (int i = 1; i <= 5; i++)
             {
                 map.Devices.Add(new DeviceInstanceDefinition
                 {
-                    Id = "V-" + i, Type = "ThrottleValve", Port = "BUS_B", SlaveId = (byte)i
+                    Id = "V-" + i, Type = "ThrottleValve", Port = "CH2", SlaveId = (byte)i
                 });
 
                 map.Devices.Add(new DeviceInstanceDefinition
                 {
-                    Id = "F-" + i, Type = "BlowerFan", Port = "BUS_C", SlaveId = (byte)i
+                    Id = "F-" + i, Type = "BlowerFan", Port = "CH2", SlaveId = (byte)(i + 5)
                 });
             }
 
@@ -125,7 +127,7 @@ namespace Esam.Tests
             ReadGroupDefinition group = new ReadGroupDefinition();
             group.Name = "pressure";
             group.Tier = PollingTier.Fast;
-            group.StartAddress = "0x0000";
+            group.StartAddress = "0x4001";
             group.Count = 1;
             group.Points.Add(new PointDefinition
             {
@@ -186,12 +188,11 @@ namespace Esam.Tests
             DeviceTypeDefinition type = new DeviceTypeDefinition();
             type.Driver = PointKeys.DriverModbusFan;
 
-            // RPM(0x0000)과 상태(0x0001)가 연속 주소이므로 1트랜잭션으로 읽는다.
-            // COMM_MAP.md 에서 HW 팀에 요청한 배치가 지켜진 경우다.
+            // JKBLD300V2: 현재속도(0x4041)와 고장코드(0x4042)가 연속이라 1트랜잭션으로 읽는다.
             ReadGroupDefinition runtime = new ReadGroupDefinition();
             runtime.Name = "runtime";
             runtime.Tier = PollingTier.Fast;
-            runtime.StartAddress = "0x0000";
+            runtime.StartAddress = "0x4041";
             runtime.Count = 2;
             runtime.Points.Add(new PointDefinition
             {
@@ -199,20 +200,22 @@ namespace Esam.Tests
             });
             runtime.Points.Add(new PointDefinition
             {
-                Key = PointKeys.RunStatus, Offset = 1, Type = PointDataType.UInt16
+                Key = PointKeys.AlarmCode, Offset = 1, Type = PointDataType.UInt16
             });
 
             type.ReadGroups.Add(runtime);
 
+            // 폐루프 RPM 지령(0x4006). 개루프(0x4007)는 RPM 이 아니라 듀티 % 라서 쓰지 않는다.
             type.Commands["setRpm"] =
-                new CommandDefinition { FunctionCode = 6, Address = "0x2000", Value = "$arg" };
+                new CommandDefinition { FunctionCode = 6, Address = "0x4006", Value = "$arg" };
             type.Commands["start"] =
-                new CommandDefinition { FunctionCode = 6, Address = "0x2001", Value = "1" };
+                new CommandDefinition { FunctionCode = 6, Address = "0x4034", Value = "1" };
             type.Commands["stop"] =
-                new CommandDefinition { FunctionCode = 6, Address = "0x2001", Value = "0" };
+                new CommandDefinition { FunctionCode = 6, Address = "0x4034", Value = "0" };
 
-            // 팬 사양이 확보된 상태를 가정한다. MaxRpm 이 0 이면 자동 제어가 차단된다.
-            type.Conversion.MaxRpm = 3000.0;
+            // JKBLD300V2 폐루프 설정 레지스터의 유효 범위.
+            type.Conversion.MinRpm = 200.0;
+            type.Conversion.MaxRpm = 4000.0;
             return type;
         }
 
@@ -311,11 +314,11 @@ namespace Esam.Tests
         // ── 구성 및 배선 ────────────────────────────────────────────────────────
 
         [Fact]
-        public void 런타임이_포트_3개와_체인_5개로_구성된다()
+        public void 런타임이_포트_2개와_체인_5개로_구성된다()
         {
             EsamRuntime runtime = CreateRuntime();
 
-            Assert.Equal(3, runtime.Workers.Count);
+            Assert.Equal(2, runtime.Workers.Count);
             Assert.Equal(5, runtime.Control.Chains.Count);
             Assert.NotNull(runtime.Store);
             Assert.NotNull(runtime.Engine);
@@ -331,7 +334,7 @@ namespace Esam.Tests
             DeviceMap broken = CreateMap();
             broken.Devices.Add(new DeviceInstanceDefinition
             {
-                Id = "S9-9", Type = "WTDM550", Port = "BUS_A", SlaveId = 1
+                Id = "S9-9", Type = "DiffPressure", Port = "CH1", SlaveId = 1
             });
 
             RuntimeOptions options = new RuntimeOptions();
@@ -449,7 +452,7 @@ namespace Esam.Tests
             Assert.Equal(Quality.Good, runtime.Store.Current.FindPressure("S2-1").Quality);
 
             // S2-1 은 센서 목록 4번째이므로 슬레이브 4번이다.
-            Assert.True(Transport(runtime, "BUS_A").DetachSlave(4));
+            Assert.True(Transport(runtime, "CH1").DetachSlave(4));
 
             PollAll(runtime);
 
@@ -620,7 +623,7 @@ namespace Esam.Tests
             runtime.Engine.RequestAuto();
 
             // 전 체인의 센서 2를 분리한다(슬레이브 4~8).
-            SimulatedModbusTransport busA = Transport(runtime, "BUS_A");
+            SimulatedModbusTransport busA = Transport(runtime, "CH1");
 
             for (byte slave = 4; slave <= 8; slave++)
             {
@@ -812,7 +815,7 @@ namespace Esam.Tests
 
             // S3-1 은 센서 목록 9번째이므로 슬레이브 9번이다.
             // 센서를 읽을 수 없게 되어도 래치가 풀려서는 안 된다.
-            Assert.True(Transport(runtime, "BUS_A").DetachSlave(9));
+            Assert.True(Transport(runtime, "CH1").DetachSlave(9));
 
             PollAll(runtime);
 
@@ -941,7 +944,7 @@ namespace Esam.Tests
 
             map.Devices.Add(new DeviceInstanceDefinition
             {
-                Id = "PLC-1", Type = "LsXbmPlc", Port = "BUS_A", SlaveId = 25
+                Id = "PLC-1", Type = "LsXbmPlc", Port = "CH1", SlaveId = 25
             });
 
             EsamRuntime runtime = CreateRuntime(null, map);

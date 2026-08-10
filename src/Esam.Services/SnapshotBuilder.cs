@@ -327,8 +327,18 @@ namespace Esam.Services
                 runStatus = status.Value >= 2.0 ? FanRunStatus.Running : FanRunStatus.Ramping;
             }
 
+            // 목표값 자리에는 드라이버에서 되읽은 설정값을 넣는다.
+            // 예전에는 측정값을 그대로 복사했는데, 그러면 화면과 진단이
+            // "지령과 실측이 항상 일치"하는 것처럼 보여 지령 거부를 알아챌 수 없다.
+            // 되읽기 포인트가 없는 구성에서는 부득이 측정값으로 대체한다.
+            PointSample setpoint = Find(device.Id, PointKeys.RpmSetpoint, nowUtc);
+
+            double targetRpm = setpoint != null && setpoint.Quality == Quality.Good
+                ? setpoint.Value
+                : rpm.Value;
+
             return new FanState(
-                device.Id, rpm.Value, rpm.Value, runStatus, alarmCode,
+                device.Id, rpm.Value, targetRpm, runStatus, alarmCode,
                 rpm.Quality, rpm.TimestampUtc);
         }
 
@@ -372,8 +382,19 @@ namespace Esam.Services
                 }
             }
 
-            PointSample ctrlBoxFan = Find(device.Id, PointKeys.DiControlBoxFan, nowUtc);
+            // 컨트롤박스 냉각팬은 상·하 2대다. 어느 한쪽이라도 정지하면 알람으로 본다.
+            PointSample ctrlBoxFanTop = Find(device.Id, PointKeys.DiControlBoxFanTop, nowUtc);
+            PointSample ctrlBoxFanBottom = Find(device.Id, PointKeys.DiControlBoxFanBottom, nowUtc);
+            PointSample ctrlBoxFan = ctrlBoxFanTop ?? ctrlBoxFanBottom;
+
+            bool ctrlBoxFanAlarm =
+                (ctrlBoxFanTop != null && ctrlBoxFanTop.AsBoolean)
+                || (ctrlBoxFanBottom != null && ctrlBoxFanBottom.AsBoolean);
+
             PointSample emo = Find(device.Id, PointKeys.DiEmo, nowUtc);
+
+            // 도어·메인 차단기는 배선된 입력이 없어 항상 null 이다.
+            // 키 조회는 남겨 두어 배선이 추가되면 코드 변경 없이 동작하게 한다.
             PointSample door = Find(device.Id, PointKeys.DiDoor, nowUtc);
             PointSample breaker = Find(device.Id, PointKeys.DiMainBreaker, nowUtc);
             PointSample panel = Find(device.Id, PointKeys.TempPanel, nowUtc);
@@ -383,7 +404,9 @@ namespace Esam.Services
                 aux.ControlBoxTemperature = panel.Value;
             }
 
-            if (!anyKnown && emo == null && breaker == null)
+            // 도어·차단기는 배선이 없어 판정에서 제외한다.
+            // 이 둘을 조건에 넣으면 정상 구성에서도 영원히 NoData 가 된다.
+            if (!anyKnown && emo == null)
             {
                 return PlcDigitalState.NoData();
             }
@@ -394,7 +417,7 @@ namespace Esam.Services
 
             return new PlcDigitalState(
                 fanStops,
-                ctrlBoxFan != null && ctrlBoxFan.AsBoolean,
+                ctrlBoxFanAlarm,
                 emo != null && emo.AsBoolean,
                 door != null && door.AsBoolean,
                 breaker != null && breaker.AsBoolean,

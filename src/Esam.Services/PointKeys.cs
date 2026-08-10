@@ -70,29 +70,75 @@ namespace Esam.Services
         /// <summary>운전 상태 코드.</summary>
         public const string RunStatus = "runStatus";
 
-        // ── PLC 디지털 입력 ─────────────────────────────────────────────────────
+        /// <summary>
+        /// 팬 회전수 설정값 되읽기 [RPM]. JKBLD300V2 는 0x4006(폐루프)이다.
+        /// </summary>
+        /// <remarks>
+        /// <b>제어에 쓰지 않는다.</b> 제어기는 자기가 낸 지령을 적분 상태로 들고 있어야 하고,
+        /// 되읽은 값은 드라이버가 지령을 거부·클램프했는지 대조하는 진단용이다.
+        /// 이 값을 제어 경로에 넣으면 통신 지연만큼 적분이 뒤처진다.
+        /// </remarks>
+        public const string RpmSetpoint = "rpmSetpoint";
 
-        /// <summary>송풍팬 정지 알람 접두. 뒤에 0~4 가 붙는다(D10.0 ~ D10.4).</summary>
+        // ── PLC 디지털 입력 ─────────────────────────────────────────────────────
+        //
+        // IO List_260801.xlsx 기준. Modbus 로는 슬레이브 25 의 0x000A 한 워드에
+        // 8점이 비트마스크로 들어온다. PLC DATA 표기 D10.n 은 비트 (n-1) 이다.
+        //
+        //   bit0 D10.1  EMO1 비상정지
+        //   bit1 D10.2  EC BLDC 냉각팬 정지
+        //   bit2 D10.3  EL BLDC 냉각팬 정지
+        //   bit3 D10.4  ER BLDC 냉각팬 정지
+        //   bit4 D10.5  SL BLDC 냉각팬 정지
+        //   bit5 D10.6  SR BLDC 냉각팬 정지
+        //   bit6 D10.7  컨트롤박스 팬 T 정지
+        //   bit7 D10.8  컨트롤박스 팬 B 정지
+
+        /// <summary>송풍팬 정지 알람 접두. 뒤에 0~4 가 붙는다(bit1 ~ bit5).</summary>
         public const string DiFanStopPrefix = "di.fanStop";
 
-        /// <summary>제어박스 냉각팬 알람(D10.5).</summary>
-        public const string DiControlBoxFan = "di.ctrlBoxFan";
+        /// <summary>컨트롤박스 상부 팬 정지(bit6).</summary>
+        public const string DiControlBoxFanTop = "di.controlBoxFanT";
 
-        /// <summary>비상정지(D10.6).</summary>
+        /// <summary>컨트롤박스 하부 팬 정지(bit7).</summary>
+        public const string DiControlBoxFanBottom = "di.controlBoxFanB";
+
+        /// <summary>비상정지(bit0).</summary>
         public const string DiEmo = "di.emo";
 
-        /// <summary>도어 열림(D10.7).</summary>
+        /// <summary>
+        /// 도어 열림. <b>배선된 입력이 없다.</b>
+        /// </summary>
+        /// <remarks>
+        /// IO List_260801.xlsx 의 DI 8점에 도어 접점이 없다. 인터록 IL-05 는
+        /// 신호원이 없어 비활성 상태로 유지된다(DESIGN.md Open Issue #7).
+        /// 키는 배선 추가 시 즉시 쓸 수 있도록 남겨 둔다.
+        /// </remarks>
         public const string DiDoor = "di.door";
 
-        /// <summary>메인 차단기 OFF(D10.8).</summary>
+        /// <summary>
+        /// 메인 차단기 OFF. <b>배선된 입력이 없다.</b>
+        /// </summary>
+        /// <remarks>
+        /// 도어와 같은 이유로 IL-03 도 비활성이다. SPARE DI 2점이 남아 있으므로
+        /// HW 팀이 배선하면 이 키에 매핑하면 된다.
+        /// </remarks>
         public const string DiMainBreaker = "di.mainBreaker";
 
         // ── PLC 온도 ────────────────────────────────────────────────────────────
 
-        /// <summary>송풍팬 온도 접두. 뒤에 0~4 가 붙는다(D100 ~ D104).</summary>
+        /// <summary>BLDC 온도 접두. 뒤에 0~4 가 붙는다(0x0064 ~ 0x0068, K형 열전대).</summary>
         public const string TempFanPrefix = "temp.fan";
 
-        /// <summary>판넬(컨트롤박스) 온도(D105).</summary>
+        /// <summary>BLDC 온도센서 단선 접두. 뒤에 0~4 가 붙는다(0x006E ~ 0x0072).</summary>
+        public const string TempFaultPrefix = "temp.fault";
+
+        /// <summary>
+        /// 판넬(컨트롤박스) 온도. <b>현재 배선된 채널이 없다.</b>
+        /// </summary>
+        /// <remarks>
+        /// TC Module 2 의 CH1~CH3 이 IO List 에서 비어 있다. 채널이 배정되면 매핑한다.
+        /// </remarks>
         public const string TempPanel = "temp.panel";
 
         // ── 보조 계측 ───────────────────────────────────────────────────────────

@@ -203,29 +203,34 @@ namespace Esam.Domain.Alarms
                 ResetPolicy = AlarmResetPolicy.Manual
             });
 
+            // IL-03 은 배선된 입력이 없어 비활성이다.
+            // IO List_260801.xlsx 의 디지털 입력 8점(0x000A)에 메인 차단기 접점이 없다.
+            // 규칙을 살려 두면 항상 false 를 읽어 "정상"으로 보고하므로,
+            // 구현되어 동작 중이라는 착각을 준다. 비활성으로 두고 구성 경고로 드러낸다.
             rules.Add(new InterlockRule
             {
                 Id = "IL-03",
-                Name = "메인 차단기 OFF → 전 체인 SafeStop",
+                Name = "메인 차단기 OFF → 전 체인 SafeStop (입력 미배선)",
                 Scope = InterlockScope.System,
-                Enabled = true,
+                Enabled = false,
                 ResetPolicy = AlarmResetPolicy.Manual
             });
 
             rules.Add(new InterlockRule
             {
                 Id = "IL-04",
-                Name = "통신 상실 → 자동 제어 중단",
+                Name = "안전 입력 신뢰 불가 → 전 체인 SafeStop",
                 Scope = InterlockScope.System,
                 Enabled = true,
                 ResetPolicy = AlarmResetPolicy.Auto
             });
 
-            // IL-05(Door Open)는 정책 미확정이므로 기본 비활성이다(DESIGN.md Open Issue #7).
+            // IL-05 도 같은 이유로 비활성이다. 도어 접점 역시 DI 8점에 없다.
+            // SPARE DI 가 2점 남아 있으므로 배선되면 Enabled 만 켜면 된다(Open Issue #7).
             rules.Add(new InterlockRule
             {
                 Id = "IL-05",
-                Name = "도어 열림 (정책 미확정)",
+                Name = "도어 열림 → 전 체인 SafeStop (입력 미배선)",
                 Scope = InterlockScope.System,
                 Enabled = false,
                 ResetPolicy = AlarmResetPolicy.Auto
