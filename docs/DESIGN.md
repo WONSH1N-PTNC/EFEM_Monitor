@@ -696,6 +696,35 @@ Hmi → Services → Domain
 | ~~20~~ | 송풍팬 최대 RPM / 최소 동작 RPM 사양 — 미확보 시 자동제어 진입 불가 | 제어 | 팬 설계자 **→ 2026-08-10 확정.** 폐루프 0x4006 유효범위 200~4000 rpm. 20000 은 드라이버 전기사양이며 제어값 아님 |
 | 21 | **IL-01 발동 임계값 확정** — 현재 0 Pa(대기압) 로 잠정 설정(5.2.1). 배기 계통 설계상 허용 최소 음압이 있다면 그 값으로 대체 | **안전** | HW팀 |
 
+#### D1~D4 해소 내역 (2026-08-10, S5)
+
+**D4 — 상태머신 락.** `Fire` 의 판정과 대입을 하나의 원자 단위로 묶었습니다. 나눠 두면 두 스레드가 같은 현재 단계를 읽고 서로 다른 다음 단계를 써서, 나중에 쓴 쪽이 이깁니다. 작업자가 자동 버튼을 누르는 순간 폴링 스레드가 인터록을 발동시키면 **인터록 래치를 안은 채 `AutoControl`** 에 들어갔습니다. `PhaseChanged` 는 락 밖에서 발생시켜, 구독자가 `Fire` 를 다시 호출해도 재진입이나 교착이 생기지 않게 했습니다.
+
+**D2 — 인터록 트리거 소실.** 두 곳을 고쳤습니다.
+
+- `Resolve` 가 `InterlockRaised` 를 **모든 비-SafeStop 단계**에서 수용합니다. 종전에는 `Ready`·`AutoControl` 에서만 처리해, 원점 복귀 중 EMO 를 누르면 전이가 무시됐습니다.
+- 상태 반영을 **엣지에서 상태 기반으로** 바꿨습니다(`EsamRuntime.ReconcileInterlock`). 종전에는 `Tripped` 이벤트(false→true 엣지)로 한 번만 시도하고, 실패하면 `_wasTripped` 가 true 로 남아 다시 시도하지 않았습니다. 이제 매 폴링마다 현재 상태를 대조하므로 전이가 한 번 실패해도 다음 사이클에 복구됩니다. **안전 기능에 "한 번 놓치면 끝"인 구조를 두어서는 안 됩니다.**
+
+**D1 — SafeStop 라우팅.** `RequiresSystemStop`(EMO·차단기·안전입력 상실)이면 `SafeStopRaised`, 체인 범위면 `InterlockRaised` 로 갈라 보냅니다. `Interlocked` 는 해제 시 `Ready` 로 바로 복귀하지만 `SafeStop` 은 `Fault → Init → 원점 복귀` 를 거칩니다. 물리 안전장치가 동작한 뒤에는 밸브 위치를 다시 확인하고 시작해야 합니다.
+
+**D3 — 원점 복귀 시퀀스.** 제어 엔진의 주기 루프가 기동 단계도 진행시킵니다.
+
+```
+Init         모든 밸브가 Quality.Good 으로 읽히면 InitCompleted
+             HomingTimeoutMs 초과 시 FaultRaised
+ValveHoming  미완료 밸브에 HomeValve 를 1회씩 지령
+             homeDone 이 전부 참이면 HomingCompleted
+             HomingTimeoutMs 초과 시 FaultRaised
+```
+
+지령을 매 스텝 반복하지 않는 이유는, 복귀 중인 드라이브가 같은 지령을 다시 받으면 동작을 재시작해 영영 끝나지 않기 때문입니다.
+
+`Stop()` 이 `Stop` 트리거를 내도록 했습니다. 단계가 `AutoControl` 로 남으면 재시작 시 `Start` 트리거가 무시되어 **초기화와 원점 복귀를 건너뛴 채 자동 운전 상태에서 재개**됩니다.
+
+시뮬레이션 기본값도 바꿨습니다. `RuntimeOptions.PreHomeValves` 기본 false 로 두어 **전원 투입 직후 상태를 그대로 재현**합니다. true 로 두면 원점 복귀 경로를 한 번도 지나지 않아, 시퀀스가 깨져 있어도 시뮬레이션에서 드러나지 않습니다. 통합 테스트의 `AdvanceToReady` 도 트리거를 직접 발생시키던 것에서 **실제 시퀀스를 돌리는 방식**으로 바꿨습니다.
+
+---
+
 ### 11.2 ESAM_UI_설명서.pptx 로 확인된 범위 확장 (2026-08-10)
 
 수령한 UI 설명서 11화면 중 현재 설계(§7)에 없는 항목입니다. 일정·범위 재산정이 필요합니다.
@@ -720,10 +749,10 @@ S4 통합 검증 중 정적 리뷰에서 찾은 항목 중 **아직 고치지 �
 
 | # | 결함 | 실패 시나리오 | 심각도 |
 |---|---|---|---|
-| D1 | **EMO가 SafeStop에 도달하지 않는다.** `SystemTrigger.SafeStopRaised` 가 프로덕션 코드에서 한 번도 발생하지 않고, IL-02/IL-03은 `InterlockRaised` 로만 전이된다 | EMO가 순간 해제되면 `Interlocked → InterlockCleared → Ready` 로 복귀. 설계는 `SafeStop → Fault → Init → ValveHoming`(재원점) 을 의도했다 | **높음** |
-| D2 | **`InterlockRaised` 가 일부 단계에서 무시되고, 그 엣지가 소실된다.** `Resolve` 는 `Ready`/`AutoControl` 에서만 처리하는데 `InterlockGuard` 는 false→true 엣지에서만 `Tripped` 를 발생시킨다 | Homing 중 EMO를 누르면 정지 지령은 나가지만 트리거가 버려지고 `_wasTripped=true` 로 남아 재시도되지 않는다. `ValveHoming` 에 머물며 UI는 인터록을 표시하지 않는다 | **높음** |
-| D3 | **`Start()` 가 원점 복귀를 확인하지 않고 완료 선언한다.** `HomeValve` 는 프로덕션 경로에서 전송되지 않는다 | `homeDone` 이 false면 밴드 제어가 전 스텝 Skipped → 화면은 AutoControl인데 아무것도 제어되지 않는다. true면 기계적 원점이 미확정이라 `CloseValve` 의 0 pulse도 실제 닫힘이 아니다 | **높음** |
-| D4 | **`SystemStateMachine` 이 스레드 안전하지 않다.** 폴링 3스레드 + 제어 스레드 + UI가 `Fire` 를 호출한다 | Auto 버튼과 인터록 발동이 겹치면 `Ready→AutoControl` 과 `Ready→Interlocked` 가 경합해 **인터록 래치를 안은 채 AutoControl** 에 들어간다 | **높음** |
+| ~~D1~~ ✅ | **EMO가 SafeStop에 도달하지 않는다.** `SystemTrigger.SafeStopRaised` 가 프로덕션 코드에서 한 번도 발생하지 않고, IL-02/IL-03은 `InterlockRaised` 로만 전이된다 | EMO가 순간 해제되면 `Interlocked → InterlockCleared → Ready` 로 복귀. 설계는 `SafeStop → Fault → Init → ValveHoming`(재원점) 을 의도했다 | **높음** |
+| ~~D2~~ ✅ | **`InterlockRaised` 가 일부 단계에서 무시되고, 그 엣지가 소실된다.** `Resolve` 는 `Ready`/`AutoControl` 에서만 처리하는데 `InterlockGuard` 는 false→true 엣지에서만 `Tripped` 를 발생시킨다 | Homing 중 EMO를 누르면 정지 지령은 나가지만 트리거가 버려지고 `_wasTripped=true` 로 남아 재시도되지 않는다. `ValveHoming` 에 머물며 UI는 인터록을 표시하지 않는다 | **높음** |
+| ~~D3~~ ✅ | **`Start()` 가 원점 복귀를 확인하지 않고 완료 선언한다.** `HomeValve` 는 프로덕션 경로에서 전송되지 않는다 | `homeDone` 이 false면 밴드 제어가 전 스텝 Skipped → 화면은 AutoControl인데 아무것도 제어되지 않는다. true면 기계적 원점이 미확정이라 `CloseValve` 의 0 pulse도 실제 닫힘이 아니다 | **높음** |
+| ~~D4~~ ✅ | **`SystemStateMachine` 이 스레드 안전하지 않다.** 폴링 3스레드 + 제어 스레드 + UI가 `Fire` 를 호출한다 | Auto 버튼과 인터록 발동이 겹치면 `Ready→AutoControl` 과 `Ready→Interlocked` 가 경합해 **인터록 래치를 안은 채 AutoControl** 에 들어간다 | **높음** |
 | D5 | **`StopAuto()` 가 액추에이터를 정지시키지 않는다.** 큐만 비우고 트리거만 발생시킨다 | Auto를 끄면 팬이 계속 돌고 밸브가 열린 상태로 남는다 | 중간 |
 | D6 | **인터록 지령의 실행 성공을 검증하지 않는다.** `worker.CommandFailed` 구독자가 없다 | `CloseValve` 는 `setPosition` → `prMove` 2단 시퀀스인데 2번째가 타임아웃하면 밸브는 전혀 움직이지 않는다. 그런데 `Tripped` 는 이미 "처리됨"을 알렸다 | 중간 |
 | D7 | **인터록이 3중 평가·9중 투입된다.** 포트 3개가 각각 판정하고 결과를 전 워커에 뿌린다 | 래치 1건에 사이클당 18회 enqueue, 담당 워커가 중복 3회 실행(6 트랜잭션). 인터록 활성 중 폴링 사이클이 늘어나 2차 위험 검출이 늦어진다 | 중간 |

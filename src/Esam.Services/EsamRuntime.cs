@@ -44,6 +44,18 @@ namespace Esam.Services
         /// <summary>시뮬레이션 난수 시드.</summary>
         public int SimulationSeed { get; set; }
 
+        /// <summary>
+        /// 시뮬레이션 시작 시 밸브를 원점 복귀 완료 상태로 둘지 여부. 기본값 false.
+        /// </summary>
+        /// <remarks>
+        /// 기본값이 false 인 이유는 <b>전원 투입 직후 상태를 그대로 재현</b>하기 위해서다.
+        /// 실장비는 원점이 미확정인 채로 켜지고, 그 상태를 거쳐야 기동 시퀀스가 검증된다.
+        /// true 로 두면 원점 복귀 경로를 한 번도 지나지 않아,
+        /// 시퀀스가 깨져 있어도 시뮬레이션에서는 드러나지 않는다.
+        /// 원점 복귀 자체가 관심사가 아닌 시나리오에서만 true 로 둔다.
+        /// </remarks>
+        public bool PreHomeValves { get; set; }
+
         /// <summary>기본값으로 초기화한다.</summary>
         public RuntimeOptions()
         {
@@ -205,13 +217,8 @@ namespace Esam.Services
             // ── 5. 전송 계층 + 포트 워커 ─────────────────────────────────────────
             runtime.BuildTransports(opts, resolvedClock);
 
-            // ── 6. 인터록 발동 시 자동 운전 중단 ─────────────────────────────────
-            runtime.Interlock.Tripped += (sender, e) =>
-                runtime.Engine.StateMachine.Fire(SystemTrigger.InterlockRaised);
-
-            runtime.Interlock.InterlockCleared += (sender, e) =>
-                runtime.Engine.StateMachine.Fire(SystemTrigger.InterlockCleared);
-
+            // 상태머신 반영은 이벤트가 아니라 폴링마다 상태를 대조해 수행한다(ReconcileInterlock).
+            // 이벤트 구독은 이력·화면용으로만 남긴다.
             return runtime;
         }
 
@@ -250,10 +257,12 @@ namespace Esam.Services
                     new Esam.Communication.Simulation.PlantOptions(),
                     options.SimulationSeed);
 
-                // 전원 ON 직후 상태를 재현하려면 Homing 을 완료 처리하지 않아야 하지만,
-                // 상위 통합 검증이 목적이므로 여기서는 완료 상태로 시작한다.
-                // 원점 복귀 시퀀스 검증은 별도 시나리오에서 수행한다.
-                Plant.CompleteAllHoming();
+                // 기본은 원점 미확정 상태로 시작한다. 제어 엔진의 기동 시퀀스가
+                // Homing 을 지령하고 완료를 확인해야 Ready 에 도달한다.
+                if (options.PreHomeValves)
+                {
+                    Plant.CompleteAllHoming();
+                }
             }
 
             foreach (PortDefinition port in Map.Ports)
@@ -372,11 +381,66 @@ namespace Esam.Services
                 Alarms == null ? null : Alarms.Summary);
 
             // 인터록을 여기서 즉시 판정한다. 제어 타이머를 기다리면 수백 ms 늦는다.
-            Interlock.Evaluate(snapshot);
+            InterlockEvaluation evaluation = Interlock.Evaluate(snapshot);
+
+            ReconcileInterlock(evaluation);
 
             if (Alarms != null)
             {
                 Alarms.Evaluate(snapshot);
+            }
+        }
+
+        /// <summary>
+        /// 인터록 판정 결과를 상태머신에 반영한다.
+        /// </summary>
+        /// <param name="evaluation">이번 사이클의 판정 결과.</param>
+        /// <remarks>
+        /// <para><b>엣지가 아니라 상태로 판단한다.</b> 종전에는 <c>Tripped</c> 이벤트(false→true 엣지)로
+        /// <c>InterlockRaised</c> 를 한 번만 발생시켰다. 그런데 상태머신이 그 트리거를 받지 못하는
+        /// 단계에 있으면 전이는 무시되고, 가드는 이미 발동 상태로 넘어가 <b>다시 시도하지 않았다.</b>
+        /// 결과적으로 액추에이터는 강제 정지 중인데 단계는 그대로 남아 화면에 인터록이 표시되지 않았다.</para>
+        /// <para>매 사이클 현재 상태를 대조하면 전이가 한 번 실패해도 다음 사이클에 복구된다.
+        /// 안전 기능에서 "한 번 놓치면 끝"인 구조를 두어서는 안 된다.</para>
+        /// <para>전 체인 정지(EMO·차단기·안전입력 상실)는 <see cref="SystemPhase.Interlocked"/> 가 아니라
+        /// <see cref="SystemPhase.SafeStop"/> 로 보낸다. Interlocked 는 해제 시 Ready 로 바로 복귀하지만,
+        /// SafeStop 은 Fault → Init → 원점 복귀를 거치게 되어 있다. 물리 안전장치가 동작한 뒤에는
+        /// 밸브 위치를 다시 확인하고 시작해야 한다.</para>
+        /// </remarks>
+        private void ReconcileInterlock(InterlockEvaluation evaluation)
+        {
+            SystemStateMachine machine = Engine.StateMachine;
+            SystemPhase phase = machine.Phase;
+
+            if (evaluation.RequiresSystemStop)
+            {
+                if (phase != SystemPhase.SafeStop)
+                {
+                    machine.Fire(SystemTrigger.SafeStopRaised);
+                }
+
+                return;
+            }
+
+            if (evaluation.HasTrip)
+            {
+                // 전 체인 정지가 걸린 상태에서 체인 인터록이 남아 있어도 SafeStop 을 풀지 않는다.
+                if (phase != SystemPhase.Interlocked && phase != SystemPhase.SafeStop)
+                {
+                    machine.Fire(SystemTrigger.InterlockRaised);
+                }
+
+                return;
+            }
+
+            // 발동이 모두 해소되었다. 단계에 맞는 해제 트리거를 낸다.
+            if (phase == SystemPhase.SafeStop)
+            {
+                machine.Fire(SystemTrigger.SafeStopCleared);
+            }
+            else if (phase == SystemPhase.Interlocked)
+            {
+                machine.Fire(SystemTrigger.InterlockCleared);
             }
         }
 
@@ -390,22 +454,29 @@ namespace Esam.Services
                 worker.Start();
             }
 
-            // 상태머신을 Idle → Init → Homing → Ready 로 진행시킨다.
-            // 실제 시스템에서는 각 단계 완료를 확인해야 하지만,
-            // 여기서는 밸브가 이미 원점 복귀된 상태로 시작하므로 바로 진행한다.
+            // Start 트리거만 낸다. Init → ValveHoming → Ready 진행은 제어 엔진이
+            // 스냅샷으로 완료를 확인하며 수행한다.
+            //
+            // 종전에는 여기서 InitCompleted 와 HomingCompleted 를 확인 없이 발생시켰다.
+            // 그 결과 원점 복귀 지령이 프로덕션 경로에서 한 번도 전송되지 않았고,
+            // 밸브의 기계적 원점이 미확정인 채로 Ready 에 도달했다.
             Engine.StateMachine.Fire(SystemTrigger.Start);
-            Engine.StateMachine.Fire(SystemTrigger.InitCompleted);
-            Engine.StateMachine.Fire(SystemTrigger.HomingCompleted);
 
             Engine.Start();
         }
 
         /// <summary>제어 루프와 폴링을 중지한다.</summary>
+        /// <remarks>
+        /// 상태머신도 Idle 로 되돌린다. 그렇지 않으면 단계가 AutoControl 로 남아,
+        /// 다시 <see cref="Start"/> 를 호출해도 Start 트리거가 무시되고
+        /// <b>초기화와 원점 복귀를 건너뛴 채 자동 운전 상태에서 재개</b>된다.
+        /// </remarks>
         public void Stop()
         {
             if (Engine != null)
             {
                 Engine.Stop();
+                Engine.StateMachine.Fire(SystemTrigger.Stop);
             }
 
             foreach (ModbusPortWorker worker in _workers)

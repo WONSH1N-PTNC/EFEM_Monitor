@@ -45,22 +45,43 @@ namespace Esam.Domain.Control
     ///   <item><description><b>Homing 필수</b>: 밸브 드라이브가 전원 ON 후 원점 복귀를 요구하므로
     ///     Init → ValveHoming 을 거치지 않고는 Ready 에 도달할 수 없다.</description></item>
     /// </list>
-    /// <para>이 클래스는 스레드 안전하지 않다. 제어 엔진 스레드에서만 조작한다.</para>
+    /// <para><b>이 클래스는 스레드 안전하다.</b> 당초에는 "제어 엔진 스레드에서만 조작" 을
+    /// 전제했으나 실제 배선에서는 다섯 경로가 <see cref="Fire"/> 를 호출한다.
+    /// 포트 워커 3스레드(인터록 발동/해제), 제어 스레드, UI 스레드(자동 요청/정지/리셋)다.</para>
+    /// <para>보호하지 않으면 다음이 일어난다. 작업자가 자동 버튼을 누르는 순간 폴링 스레드가
+    /// 인터록을 발동시키면, 두 스레드가 각각 <c>Ready→AutoControl</c> 과 <c>Ready→Interlocked</c> 를
+    /// 결정하고 나중에 쓴 쪽이 이긴다. <b>인터록 래치를 안은 채 AutoControl 에 들어가</b>
+    /// 제어기가 자동 지령을 재개하고, 인터록은 매 사이클 밸브를 닫는다.
+    /// 밸브가 200ms 주기로 열렸다 닫히는 동안 화면은 정상 자동 운전으로 보인다.</para>
+    /// <para><see cref="PhaseEnteredUtc"/> 가 <see cref="Phase"/> 와 다른 전이의 값으로
+    /// 짝지어질 수도 있다. 원점 복귀·이동 타임아웃이 이 값을 쓰므로 그대로 오판으로 이어진다.</para>
     /// </remarks>
     public sealed class SystemStateMachine
     {
         private readonly IClock _clock;
 
+        /// <summary>상태 보호용 락. 다섯 경로가 동시에 접근한다.</summary>
+        private readonly object _gate = new object();
+
+        private SystemPhase _phase;
+        private DateTime _phaseEnteredUtc;
+
         /// <summary>현재 운전 단계.</summary>
-        public SystemPhase Phase { get; private set; }
+        public SystemPhase Phase
+        {
+            get { lock (_gate) { return _phase; } }
+        }
 
         /// <summary>현재 단계에 진입한 시각(UTC).</summary>
-        public DateTime PhaseEnteredUtc { get; private set; }
+        public DateTime PhaseEnteredUtc
+        {
+            get { lock (_gate) { return _phaseEnteredUtc; } }
+        }
 
         /// <summary>자동 제어가 활성화되어 있는지 여부.</summary>
         public bool IsAutoEnabled
         {
-            get { return Phase == SystemPhase.AutoControl; }
+            get { lock (_gate) { return _phase == SystemPhase.AutoControl; } }
         }
 
         /// <summary>액추에이터 지령을 내도 되는 단계인지 여부.</summary>
@@ -68,9 +89,12 @@ namespace Esam.Domain.Control
         {
             get
             {
-                return Phase == SystemPhase.ValveHoming
-                       || Phase == SystemPhase.Ready
-                       || Phase == SystemPhase.AutoControl;
+                lock (_gate)
+                {
+                    return _phase == SystemPhase.ValveHoming
+                           || _phase == SystemPhase.Ready
+                           || _phase == SystemPhase.AutoControl;
+                }
             }
         }
 
@@ -88,15 +112,22 @@ namespace Esam.Domain.Control
             }
 
             _clock = clock;
-            Phase = SystemPhase.Idle;
-            PhaseEnteredUtc = clock.UtcNow;
+            _phase = SystemPhase.Idle;
+            _phaseEnteredUtc = clock.UtcNow;
         }
 
         /// <summary>현재 단계에 머문 시간을 반환한다.</summary>
         /// <returns>경과 시간.</returns>
         public TimeSpan GetElapsedInPhase()
         {
-            return _clock.UtcNow - PhaseEnteredUtc;
+            DateTime entered;
+
+            lock (_gate)
+            {
+                entered = _phaseEnteredUtc;
+            }
+
+            return _clock.UtcNow - entered;
         }
 
         /// <summary>트리거를 처리해 상태를 전이시킨다.</summary>
@@ -104,21 +135,35 @@ namespace Esam.Domain.Control
         /// <returns>실제로 전이가 일어났으면 true, 무시되었으면 false.</returns>
         public bool Fire(SystemTrigger trigger)
         {
-            SystemPhase next = Resolve(Phase, trigger);
+            SystemPhase previous;
+            SystemPhase next;
+            DateTime enteredUtc;
 
-            if (next == Phase)
+            // 판정과 대입이 하나의 원자 단위여야 한다.
+            // 나눠 놓으면 두 스레드가 같은 현재 단계를 읽고 서로 다른 다음 단계를 쓴다.
+            lock (_gate)
             {
-                return false;
+                previous = _phase;
+                next = Resolve(_phase, trigger);
+
+                if (next == _phase)
+                {
+                    return false;
+                }
+
+                enteredUtc = _clock.UtcNow;
+                _phase = next;
+                _phaseEnteredUtc = enteredUtc;
             }
 
-            SystemPhase previous = Phase;
-            Phase = next;
-            PhaseEnteredUtc = _clock.UtcNow;
-
+            // 이벤트는 락 밖에서 발생시킨다.
+            // 구독자가 Fire 를 다시 호출하면(예: 인터록 해제 → 자동 재요청)
+            // 락 안에서는 재진입이 되어 상태가 꼬이거나, 다른 락을 잡으면 교착이 된다.
             EventHandler<PhaseChangedEventArgs> handler = PhaseChanged;
+
             if (handler != null)
             {
-                handler(this, new PhaseChangedEventArgs(previous, next, trigger, PhaseEnteredUtc));
+                handler(this, new PhaseChangedEventArgs(previous, next, trigger, enteredUtc));
             }
 
             return true;
@@ -152,6 +197,16 @@ namespace Esam.Domain.Control
                 return SystemPhase.Fault;
             }
 
+            // ── 인터록은 어느 단계에서 발동하든 받아들인다 ──────────────────────────
+            // 종전에는 Ready 와 AutoControl 에서만 처리했다. 그런데 인터록은 원점 복귀 중이나
+            // 초기화 중에도 발동할 수 있고, 오히려 그때가 밸브가 움직이는 구간이라 더 위험하다.
+            // 무시하면 액추에이터 정지 지령은 나가는데 단계는 그대로여서
+            // 상태머신과 화면은 "인터록 없음" 으로 보인다.
+            if (trigger == SystemTrigger.InterlockRaised)
+            {
+                return SystemPhase.Interlocked;
+            }
+
             switch (current)
             {
                 case SystemPhase.Idle:
@@ -179,11 +234,6 @@ namespace Esam.Domain.Control
                         return SystemPhase.AutoControl;
                     }
 
-                    if (trigger == SystemTrigger.InterlockRaised)
-                    {
-                        return SystemPhase.Interlocked;
-                    }
-
                     return trigger == SystemTrigger.Stop ? SystemPhase.Idle : current;
 
                 case SystemPhase.AutoControl:
@@ -192,7 +242,7 @@ namespace Esam.Domain.Control
                         return SystemPhase.Ready;
                     }
 
-                    return trigger == SystemTrigger.InterlockRaised ? SystemPhase.Interlocked : current;
+                    return current;
 
                 case SystemPhase.Interlocked:
                     // 인터록 해제 후에도 자동으로 운전에 복귀하지 않는다.

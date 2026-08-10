@@ -38,6 +38,15 @@ namespace Esam.Services
         private readonly Dictionary<string, MovingAverageFilter> _filters;
         private readonly object _gate = new object();
 
+        /// <summary>
+        /// 이번 기동에서 원점 복귀를 이미 지령한 밸브 ID 집합.
+        /// </summary>
+        /// <remarks>
+        /// 매 스텝 같은 지령을 반복하면 드라이브가 복귀 동작을 재시작해 영영 끝나지 않는다.
+        /// </remarks>
+        private readonly HashSet<string> _homingRequested =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         private CancellationTokenSource _cancellation;
         private Task _loopTask;
         private bool _disposed;
@@ -225,9 +234,32 @@ namespace Esam.Services
 
             int dispatched = 0;
 
+            SystemPhase phase = _stateMachine.Phase;
+
+            // 기동 단계는 이 루프가 진행시킨다. 별도 스레드를 두지 않는 이유는
+            // 초기화·원점 복귀 모두 "스냅샷을 보고 완료를 판정" 하는 일이라
+            // 제어 스텝과 성격이 같고, 주기도 같아도 충분하기 때문이다.
+            if (phase == SystemPhase.Init)
+            {
+                AdvanceInit();
+                watch.Stop();
+                _lastStepMs = watch.Elapsed.TotalMilliseconds;
+                Interlocked.Increment(ref _stepCount);
+                return 0;
+            }
+
+            if (phase == SystemPhase.ValveHoming)
+            {
+                int homingCommands = AdvanceHoming();
+                watch.Stop();
+                _lastStepMs = watch.Elapsed.TotalMilliseconds;
+                Interlocked.Increment(ref _stepCount);
+                return homingCommands;
+            }
+
             // 자동 제어 단계가 아니면 지령을 만들지 않는다.
-            // Homing 중이거나 인터록 상태에서 자동 지령이 나가면 안 된다.
-            if (_stateMachine.Phase != SystemPhase.AutoControl)
+            // Ready 는 수동 조작만 허용하고, 인터록·SafeStop 에서는 아무것도 내지 않는다.
+            if (phase != SystemPhase.AutoControl)
             {
                 watch.Stop();
                 _lastStepMs = watch.Elapsed.TotalMilliseconds;
@@ -300,6 +332,122 @@ namespace Esam.Services
             Interlocked.Increment(ref _stepCount);
 
             return dispatched;
+        }
+
+        /// <summary>
+        /// 초기화 단계를 진행한다. 모든 밸브를 읽을 수 있게 되면 원점 복귀로 넘어간다.
+        /// </summary>
+        /// <remarks>
+        /// 통신이 성립하지 않은 채 원점 복귀로 넘어가면 지령이 나가지 않는데도
+        /// 완료를 기다리게 되어, 원인이 "타임아웃" 으로만 보인다.
+        /// 여기서 통신을 먼저 확인하면 실패 원인이 초기화 단계에 남는다.
+        /// </remarks>
+        private void AdvanceInit()
+        {
+            SystemSnapshot snapshot = _store.Current;
+            int required = 0;
+            int readable = 0;
+
+            foreach (ChainRuntime runtime in _runtimes)
+            {
+                if (!runtime.Definition.Enabled || string.IsNullOrEmpty(runtime.Definition.ValveId))
+                {
+                    continue;
+                }
+
+                required++;
+                ValveState valve = snapshot.FindValve(runtime.Definition.ValveId);
+
+                if (valve != null && valve.Quality == Quality.Good)
+                {
+                    readable++;
+                }
+            }
+
+            if (required > 0 && readable == required)
+            {
+                _stateMachine.Fire(SystemTrigger.InitCompleted);
+                return;
+            }
+
+            // 통신이 끝내 성립하지 않으면 장애로 확정한다.
+            // 원점 복귀 타임아웃과 같은 값을 쓴다. 둘 다 "장비가 응답하지 않는" 상황이다.
+            if (_stateMachine.GetElapsedInPhase().TotalMilliseconds > _config.Valve.HomingTimeoutMs)
+            {
+                _stateMachine.Fire(SystemTrigger.FaultRaised);
+            }
+        }
+
+        /// <summary>
+        /// 원점 복귀 단계를 진행한다. 미완료 밸브에 Homing 을 지령하고 완료를 확인한다.
+        /// </summary>
+        /// <returns>이번 스텝에서 투입한 지령 수.</returns>
+        /// <remarks>
+        /// <para><b>종전에는 이 단계가 없었다.</b> 조립 루트가 <c>HomingCompleted</c> 를
+        /// 확인 없이 발생시켜, 원점 복귀 지령이 프로덕션 경로에서 한 번도 전송되지 않았다.</para>
+        /// <para>그 상태로 실장비를 돌리면 두 가지 중 하나가 된다.
+        /// <c>homeDone</c> 이 false 면 <see cref="ValveState.IsControllable"/> 이 false 라
+        /// 밴드 제어가 매 스텝 Skipped 를 반환한다. 화면은 자동 운전인데 아무것도 제어되지 않는다.
+        /// 반대로 <c>homeDone</c> 이 참으로 읽히면 기계적 원점이 미확정이라
+        /// 이후 모든 pulse 지령이 알 수 없는 만큼 어긋난다. 인터록의 "0 pulse 로 닫기" 도 마찬가지다.</para>
+        /// <para>지령은 매 스텝 반복해서 내지 않는다. 드라이브가 원점 복귀 중일 때
+        /// 같은 지령을 다시 받으면 동작을 재시작할 수 있기 때문이다.</para>
+        /// </remarks>
+        private int AdvanceHoming()
+        {
+            SystemSnapshot snapshot = _store.Current;
+            List<ActuatorCommand> commands = new List<ActuatorCommand>();
+
+            int required = 0;
+            int completed = 0;
+
+            foreach (ChainRuntime runtime in _runtimes)
+            {
+                ChainDefinition definition = runtime.Definition;
+
+                if (!definition.Enabled || string.IsNullOrEmpty(definition.ValveId))
+                {
+                    continue;
+                }
+
+                required++;
+                ValveState valve = snapshot.FindValve(definition.ValveId);
+
+                if (valve != null && valve.Quality == Quality.Good && valve.IsHomeDone)
+                {
+                    completed++;
+                    continue;
+                }
+
+                // 아직 지령하지 않은 밸브에만 1회 보낸다.
+                if (_homingRequested.Add(definition.ValveId))
+                {
+                    commands.Add(ActuatorCommand.HomeValve(
+                        definition.ValveId, "기동 시퀀스: 전원 투입 후 원점 복귀"));
+                }
+            }
+
+            if (required > 0 && completed == required)
+            {
+                _homingRequested.Clear();
+                _stateMachine.Fire(SystemTrigger.HomingCompleted);
+                return 0;
+            }
+
+            if (_stateMachine.GetElapsedInPhase().TotalMilliseconds > _config.Valve.HomingTimeoutMs)
+            {
+                // 미완료 상태로 Ready 에 올려 보내면 제어가 성립하지 않는 채로 운전에 들어간다.
+                _homingRequested.Clear();
+                _stateMachine.Fire(SystemTrigger.FaultRaised);
+                return 0;
+            }
+
+            if (commands.Count > 0)
+            {
+                Dispatch(commands);
+            }
+
+            return commands.Count;
         }
 
         /// <summary>자동 운전을 요청한다.</summary>

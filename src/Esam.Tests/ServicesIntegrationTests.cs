@@ -275,12 +275,34 @@ namespace Esam.Tests
             }
         }
 
-        /// <summary>상태머신을 Ready 까지 진행시킨다.</summary>
-        private static void AdvanceToReady(EsamRuntime runtime)
+        /// <summary>
+        /// 기동 시퀀스를 실제로 돌려 Ready 까지 진행시킨다.
+        /// </summary>
+        /// <remarks>
+        /// 종전에는 InitCompleted·HomingCompleted 를 직접 발생시켰다. 그러면 원점 복귀 경로를
+        /// 한 번도 지나지 않아, 시퀀스가 깨져 있어도 어떤 테스트에서도 드러나지 않는다.
+        /// 폴링과 제어 스텝을 실제로 반복해 Ready 에 도달시킨다.
+        /// </remarks>
+        private void AdvanceToReady(EsamRuntime runtime)
         {
             runtime.Engine.StateMachine.Fire(SystemTrigger.Start);
-            runtime.Engine.StateMachine.Fire(SystemTrigger.InitCompleted);
-            runtime.Engine.StateMachine.Fire(SystemTrigger.HomingCompleted);
+
+            for (int i = 0; i < 200; i++)
+            {
+                PollAll(runtime);
+                runtime.Engine.ExecuteStep();
+                runtime.Plant.Advance(0.2);
+                _clock.AdvanceMs(200);
+
+                if (runtime.Engine.StateMachine.Phase == SystemPhase.Ready)
+                {
+                    return;
+                }
+            }
+
+            Assert.True(false,
+                "기동 시퀀스가 Ready 에 도달하지 못했습니다. 현재 단계: "
+                + runtime.Engine.StateMachine.Phase);
         }
 
         /// <summary>폴링 → 제어 → 플랜트 진행을 지정 횟수 반복한다.</summary>
@@ -548,6 +570,212 @@ namespace Esam.Tests
 
             AdvanceToReady(runtime);
             Assert.True(runtime.Engine.RequestAuto());
+        }
+
+        // ── S5: 기동 시퀀스 (D3) ────────────────────────────────────────────────
+
+        [Fact]
+        public void 기동_시퀀스가_원점_복귀를_실제로_지령한다()
+        {
+            // ★ 회귀 방지.
+            // 종전에는 조립 루트가 HomingCompleted 를 확인 없이 발생시켜,
+            // 원점 복귀 지령이 프로덕션 경로에서 한 번도 전송되지 않았다.
+            EsamRuntime runtime = CreateRuntime();
+
+            // 전원 투입 직후에는 원점이 미확정이다.
+            PollAll(runtime);
+            Assert.False(runtime.Store.Current.FindValve("V-1").IsHomeDone);
+
+            runtime.Engine.StateMachine.Fire(SystemTrigger.Start);
+            Assert.Equal(SystemPhase.Init, runtime.Engine.StateMachine.Phase);
+
+            // 통신이 확인되면 원점 복귀 단계로 넘어간다.
+            PollAll(runtime);
+            runtime.Engine.ExecuteStep();
+            Assert.Equal(SystemPhase.ValveHoming, runtime.Engine.StateMachine.Phase);
+
+            // 원점 복귀 지령이 5대 모두에 나가야 한다.
+            PollAll(runtime);
+            Assert.Equal(5, runtime.Engine.ExecuteStep());
+
+            // 지령이 실행되면 완료 상태가 되고 Ready 로 넘어간다.
+            PollAll(runtime);
+            runtime.Engine.ExecuteStep();
+
+            Assert.Equal(SystemPhase.Ready, runtime.Engine.StateMachine.Phase);
+            Assert.True(runtime.Store.Current.FindValve("V-1").IsHomeDone);
+        }
+
+        [Fact]
+        public void 원점_복귀_지령은_매_스텝_반복하지_않는다()
+        {
+            // 복귀 중인 드라이브에 같은 지령을 다시 보내면 동작을 재시작해 영영 끝나지 않는다.
+            EsamRuntime runtime = CreateRuntime();
+
+            runtime.Engine.StateMachine.Fire(SystemTrigger.Start);
+            PollAll(runtime);
+            runtime.Engine.ExecuteStep();   // Init → ValveHoming
+
+            Assert.Equal(5, runtime.Engine.ExecuteStep());   // 1회차: 5대 지령
+
+            // 폴링 없이 다시 스텝을 밟아도 추가 지령이 나가지 않는다.
+            Assert.Equal(0, runtime.Engine.ExecuteStep());
+            Assert.Equal(0, runtime.Engine.ExecuteStep());
+        }
+
+        [Fact]
+        public void 원점_복귀가_끝나지_않으면_타임아웃_후_Fault가_된다()
+        {
+            // 미완료 상태로 Ready 에 올리면 제어가 성립하지 않는 채 운전에 들어간다.
+            // 밴드 제어가 매 스텝 Skipped 를 반환하는데 화면은 정상으로 보인다.
+            EsamRuntime runtime = CreateRuntime();
+
+            // 밸브가 원점 복귀 지령에 응답하지 않는 상황을 만든다(슬레이브 1~5 분리).
+            SimulatedModbusTransport bus = Transport(runtime, "CH2");
+
+            runtime.Engine.StateMachine.Fire(SystemTrigger.Start);
+            PollAll(runtime);
+            runtime.Engine.ExecuteStep();   // Init → ValveHoming
+
+            for (byte slave = 1; slave <= 5; slave++)
+            {
+                Assert.True(bus.DetachSlave(slave));
+            }
+
+            for (int i = 0; i < 400; i++)
+            {
+                PollAll(runtime);
+                runtime.Engine.ExecuteStep();
+                _clock.AdvanceMs(200);
+
+                if (runtime.Engine.StateMachine.Phase == SystemPhase.Fault)
+                {
+                    break;
+                }
+            }
+
+            Assert.Equal(SystemPhase.Fault, runtime.Engine.StateMachine.Phase);
+        }
+
+        [Fact]
+        public void Stop_후_재시작하면_원점_복귀를_다시_거친다()
+        {
+            // Stop 이 단계를 되돌리지 않으면 Start 트리거가 무시되고
+            // 초기화·원점 복귀를 건너뛴 채 자동 운전 상태에서 재개된다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            Assert.Equal(SystemPhase.AutoControl, runtime.Engine.StateMachine.Phase);
+
+            runtime.Stop();
+            Assert.Equal(SystemPhase.Idle, runtime.Engine.StateMachine.Phase);
+
+            // 재시작하면 Init 부터 시작한다.
+            runtime.Engine.StateMachine.Fire(SystemTrigger.Start);
+            Assert.Equal(SystemPhase.Init, runtime.Engine.StateMachine.Phase);
+        }
+
+        [Fact]
+        public void 원점_복귀_중_인터록이_발동하면_단계에_반영된다()
+        {
+            // ★ 회귀 방지.
+            // 종전에는 InterlockRaised 가 Ready·AutoControl 에서만 처리되고,
+            // 가드는 엣지를 이미 소비해 재시도하지 않았다.
+            // 액추에이터는 강제 정지 중인데 화면에는 인터록이 뜨지 않았다.
+            EsamRuntime runtime = CreateRuntime();
+
+            runtime.Engine.StateMachine.Fire(SystemTrigger.Start);
+            PollAll(runtime);
+            runtime.Engine.ExecuteStep();
+
+            Assert.Equal(SystemPhase.ValveHoming, runtime.Engine.StateMachine.Phase);
+
+            LoseExhaust(runtime);
+            runtime.Plant.Advance(2.0);
+            PollAll(runtime);
+
+            Assert.True(runtime.Interlock.IsTripped);
+            Assert.Equal(SystemPhase.Interlocked, runtime.Engine.StateMachine.Phase);
+        }
+
+        [Fact]
+        public void 전_체인_정지는_Interlocked가_아니라_SafeStop으로_간다()
+        {
+            // ★ D1. EMO·차단기·안전입력 상실은 물리 안전장치가 동작한 상황이다.
+            // Interlocked 는 해제 시 Ready 로 바로 복귀하지만,
+            // SafeStop 은 Fault → Init → 원점 복귀를 거치게 되어 있다.
+            // 밸브 위치를 다시 확인하지 않고 재가동해서는 안 된다.
+            List<InterlockRule> rules = new List<InterlockRule>(InterlockEvaluator.CreateDefaultRules());
+
+            foreach (InterlockRule rule in rules)
+            {
+                if (rule.Id == "IL-01")
+                {
+                    // 전 체인 정지로 승격시켜 SafeStop 경로를 검증한다.
+                    rule.Scope = InterlockScope.System;
+                }
+            }
+
+            RuntimeOptions options = new RuntimeOptions();
+            options.Sensor1Ids = Sensor1Ids;
+            options.InterlockRules = rules;
+
+            _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            OpenTransports(_runtime);
+
+            AdvanceToReady(_runtime);
+            _runtime.Engine.RequestAuto();
+
+            RunLoop(_runtime, 100);
+
+            LoseExhaust(_runtime);
+            RunLoop(_runtime, 20);
+
+            Assert.True(_runtime.Interlock.RequiresSystemStop);
+            Assert.Equal(SystemPhase.SafeStop, _runtime.Engine.StateMachine.Phase);
+
+            // SafeStop 에서는 어떤 트리거로도 빠져나갈 수 없다.
+            Assert.False(_runtime.Engine.RequestAuto());
+            Assert.Equal(SystemPhase.SafeStop, _runtime.Engine.StateMachine.Phase);
+        }
+
+        [Fact]
+        public void SafeStop은_해제되면_Ready가_아니라_Fault로_간다()
+        {
+            List<InterlockRule> rules = new List<InterlockRule>(InterlockEvaluator.CreateDefaultRules());
+
+            foreach (InterlockRule rule in rules)
+            {
+                if (rule.Id == "IL-01")
+                {
+                    rule.Scope = InterlockScope.System;
+                }
+            }
+
+            RuntimeOptions options = new RuntimeOptions();
+            options.Sensor1Ids = Sensor1Ids;
+            options.InterlockRules = rules;
+
+            _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            OpenTransports(_runtime);
+
+            AdvanceToReady(_runtime);
+            _runtime.Engine.RequestAuto();
+            RunLoop(_runtime, 100);
+
+            LoseExhaust(_runtime);
+            RunLoop(_runtime, 20);
+            Assert.Equal(SystemPhase.SafeStop, _runtime.Engine.StateMachine.Phase);
+
+            // 배기 복구 후 Reset 해야 래치가 풀린다.
+            RestoreExhaust(_runtime);
+            RunLoop(_runtime, 30);
+            _runtime.Interlock.Reset("IL-01");
+            PollAll(_runtime);
+
+            // 물리 안전장치 동작 후에는 원점 복귀를 다시 거쳐야 하므로 Fault 로 간다.
+            Assert.Equal(SystemPhase.Fault, _runtime.Engine.StateMachine.Phase);
         }
 
         // ── 자동 제어 ───────────────────────────────────────────────────────────

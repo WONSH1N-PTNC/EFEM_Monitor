@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using Esam.Domain.Control;
 using Xunit;
 
@@ -148,6 +151,96 @@ namespace Esam.Tests
             Assert.Equal(SystemPhase.Idle, captured.From);
             Assert.Equal(SystemPhase.Init, captured.To);
             Assert.Equal(SystemTrigger.Start, captured.Trigger);
+        }
+
+        // ── S5: 인터록 트리거 소실 방지 (D2) ────────────────────────────────────
+
+        [Theory]
+        [InlineData(SystemPhase.Init)]
+        [InlineData(SystemPhase.ValveHoming)]
+        [InlineData(SystemPhase.Ready)]
+        [InlineData(SystemPhase.AutoControl)]
+        [InlineData(SystemPhase.Fault)]
+        public void 인터록은_어느_단계에서_발동해도_수용된다(SystemPhase startPhase)
+        {
+            // ★ 회귀 방지.
+            // 종전에는 Ready 와 AutoControl 에서만 처리했다. 원점 복귀 중에 EMO 를 누르면
+            // 전이가 무시되고, InterlockGuard 는 엣지를 이미 소비해 다시 시도하지 않았다.
+            // 액추에이터는 강제 정지 중인데 단계는 ValveHoming 에 남아 화면에 인터록이 뜨지 않았다.
+            SystemStateMachine sm = Create();
+            DriveTo(sm, startPhase);
+
+            Assert.True(sm.Fire(SystemTrigger.InterlockRaised));
+            Assert.Equal(SystemPhase.Interlocked, sm.Phase);
+        }
+
+        [Fact]
+        public void SafeStop_중에는_인터록_발동이_상태를_낮추지_않는다()
+        {
+            // SafeStop 이 Interlocked 보다 상위다. 물리 안전장치가 동작한 뒤에는
+            // 원점 복귀를 다시 거쳐야 하므로 Interlocked 로 내려가면 안 된다.
+            SystemStateMachine sm = Create();
+            sm.Fire(SystemTrigger.SafeStopRaised);
+
+            Assert.False(sm.Fire(SystemTrigger.InterlockRaised));
+            Assert.Equal(SystemPhase.SafeStop, sm.Phase);
+        }
+
+        // ── S5: 스레드 안전성 (D4) ──────────────────────────────────────────────
+
+        [Fact]
+        public void 자동_요청과_인터록_발동이_겹쳐도_상태가_깨지지_않는다()
+        {
+            // ★ 회귀 방지.
+            // Fire 가 판정과 대입으로 나뉘어 있으면 두 스레드가 같은 현재 단계를 읽고
+            // 서로 다른 다음 단계를 쓴다. 나중에 쓴 쪽이 이겨
+            // "인터록 래치를 안은 채 AutoControl" 같은 불가능한 조합이 만들어진다.
+            for (int attempt = 0; attempt < 200; attempt++)
+            {
+                SystemStateMachine sm = Create();
+                DriveTo(sm, SystemPhase.Ready);
+
+                Parallel.Invoke(
+                    () => sm.Fire(SystemTrigger.AutoRequested),
+                    () => sm.Fire(SystemTrigger.InterlockRaised));
+
+                // 어느 쪽이 이기든 결과는 둘 중 하나여야 한다.
+                Assert.True(
+                    sm.Phase == SystemPhase.AutoControl || sm.Phase == SystemPhase.Interlocked,
+                    "예상 밖 단계: " + sm.Phase);
+            }
+        }
+
+        [Fact]
+        public void 동시에_전이해도_이벤트와_최종_상태가_일치한다()
+        {
+            // PhaseEnteredUtc 가 다른 전이의 값과 짝지어지면
+            // 원점 복귀·이동 타임아웃 판정이 그대로 틀어진다.
+            SystemStateMachine sm = Create();
+            DriveTo(sm, SystemPhase.Ready);
+
+            List<SystemPhase> observed = new List<SystemPhase>();
+            object gate = new object();
+
+            sm.PhaseChanged += (sender, e) =>
+            {
+                lock (gate)
+                {
+                    observed.Add(e.To);
+                }
+            };
+
+            Parallel.For(0, 100, i =>
+            {
+                sm.Fire(i % 2 == 0 ? SystemTrigger.AutoRequested : SystemTrigger.AutoStopRequested);
+            });
+
+            // 전이 횟수만큼만 이벤트가 발생했고, 마지막 이벤트가 최종 상태와 같아야 한다.
+            lock (gate)
+            {
+                Assert.NotEmpty(observed);
+                Assert.Equal(sm.Phase, observed[observed.Count - 1]);
+            }
         }
 
         [Fact]

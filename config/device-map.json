@@ -86,9 +86,10 @@
           "points": [ { "key": "positionPulse", "type": "UInt16", "unit": "pulse" } ]
         },
         {
-          // 원점 상태는 기동 시퀀스에서만 필요하므로 Slow 로 내렸다.
+          // 원점 상태는 기동 시퀀스에서 완료를 판정하는 값이다.
+          // Slow(5초)로 두면 30초 타임아웃 안에 6회밖에 확인하지 못해 판정이 거칠다.
           "name": "home",
-          "tier": "Slow",
+          "tier": "Medium",
           "functionCode": 3,
           "startAddress": "0x0147",
           "count": 1,
