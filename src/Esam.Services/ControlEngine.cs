@@ -322,9 +322,21 @@ namespace Esam.Services
                 return false;
             }
 
+            // 팬 지령 적분 상태를 드라이버의 현재 설정값으로 맞춘다.
+            // 이 단계가 없으면 수동 운전으로 이미 팬이 돌고 있어도 제어기는
+            // 지령 이력이 없다고 보고 최소값부터 다시 증속한다.
+            SystemSnapshot snapshot = _store.Current;
+
             foreach (ChainRuntime runtime in _runtimes)
             {
                 runtime.Reset();
+
+                FanState fan = snapshot.FindFan(runtime.Definition.FanId);
+
+                if (fan != null && fan.Quality == Quality.Good)
+                {
+                    runtime.SeedFanCommand(fan.TargetRpm);
+                }
             }
 
             return _stateMachine.Fire(SystemTrigger.AutoRequested);

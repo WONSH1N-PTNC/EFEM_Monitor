@@ -107,11 +107,51 @@ namespace Esam.Domain.Control
             _lastValveActionUtc = nowUtc;
         }
 
+        /// <summary>
+        /// 이 체인에 마지막으로 지령한 팬 회전수 [RPM]. 아직 지령한 적이 없으면 null.
+        /// </summary>
+        /// <remarks>
+        /// <para><b>제어기의 적분 상태이므로 측정값이 아니라 지령값을 유지해야 한다.</b>
+        /// 밴드 제어는 "현재값 + StepRpm" 으로 다음 지령을 만들고,
+        /// "현재값 >= MaxRpm - Tolerance" 로 증속 여력 소진을 판정한다.</para>
+        /// <para>여기에 측정 RPM 을 쓰면 두 가지가 깨진다.
+        /// 첫째, 팬이 아직 목표까지 램프업하지 못한 사이에 다음 스텝이 뒤처진 값에서
+        /// 계산되어 증속이 느려진다. 둘째, <b>부하 때문에 팬이 MaxRpm 에 물리적으로
+        /// 도달하지 못하면 포화 판정이 영영 성립하지 않는다.</b> 밸브가 이미 포화된 뒤
+        /// 팬이 마지막 대응 수단인 구조에서, 제어 권한을 다 쓴 상태가 보고되지 않는 것은
+        /// "대응 수단이 없는데 화면은 정상"인 위험한 불일치다.</para>
+        /// <para>드라이버가 지령을 거부하거나 클램프하는 경우는 별도로 설정값
+        /// 레지스터를 되읽어 대조한다. 그것은 진단 경로이지 제어 경로가 아니다.</para>
+        /// </remarks>
+        public double? LastFanCommandRpm { get; private set; }
+
         /// <summary>팬을 조작했음을 기록한다.</summary>
         /// <param name="nowUtc">조작 시각(UTC).</param>
-        public void MarkFanActuated(DateTime nowUtc)
+        /// <param name="commandedRpm">이번에 지령한 회전수 [RPM]. 지령을 내지 않았으면 null.</param>
+        public void MarkFanActuated(DateTime nowUtc, double? commandedRpm)
         {
             _lastFanActionUtc = nowUtc;
+
+            if (commandedRpm.HasValue)
+            {
+                LastFanCommandRpm = commandedRpm;
+            }
+        }
+
+        /// <summary>
+        /// 팬 지령 이력을 실제 설정값으로 맞춘다. 자동 운전 진입 시 1회 호출한다.
+        /// </summary>
+        /// <param name="setpointRpm">드라이버에서 되읽은 설정값 [RPM].</param>
+        /// <remarks>
+        /// 수동 운전이나 이전 세션에서 팬이 이미 돌고 있을 수 있다.
+        /// 이력을 비운 채 자동에 진입하면 현재 설정값을 무시하고 처음부터 증속하게 된다.
+        /// </remarks>
+        public void SeedFanCommand(double setpointRpm)
+        {
+            if (setpointRpm > 0.0)
+            {
+                LastFanCommandRpm = setpointRpm;
+            }
         }
 
         /// <summary>직전 판정 결과를 기록한다.</summary>
@@ -129,6 +169,10 @@ namespace Esam.Domain.Control
             _lastValveActionUtc = DateTime.MinValue;
             _lastFanActionUtc = DateTime.MinValue;
             DeviationElapsedMs = 0.0;
+
+            // 지령 이력도 비운다. 자동 운전을 다시 시작할 때는
+            // 드라이버에서 되읽은 설정값으로 SeedFanCommand 를 호출해 맞춘다.
+            LastFanCommandRpm = null;
         }
     }
 }

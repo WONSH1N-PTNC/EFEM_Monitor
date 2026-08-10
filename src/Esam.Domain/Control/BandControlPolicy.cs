@@ -158,13 +158,15 @@ namespace Esam.Domain.Control
             // 순서도에 따라 팬은 OFF. 이미 정지 상태이면 중복 지령을 보내지 않는다.
             // 정지 지령도 Dwell 을 적용한다. 그렇지 않으면 스냅샷이 정지를 반영하기 전까지
             // 매 제어 주기(기본 200ms)마다 동일한 정지 지령이 통신 큐에 쌓인다.
-            if ((context.Fan.IsRunning || context.Fan.TargetRpm > 0.0)
+            if ((context.Fan.IsRunning || ResolveFanTarget(context) > 0.0)
                 && context.Runtime.CanActuateFan(context.NowUtc, context.FanConfig.DwellMs))
             {
                 commands.Add(ActuatorCommand.StopFan(
                     context.Fan.Id, CommandPriority.Automatic,
                     Format("하한 이탈 {0:F2} Pa → 송풍팬 정지", pv)));
-                context.Runtime.MarkFanActuated(context.NowUtc);
+
+                // 정지도 지령이므로 적분 상태를 0 으로 되돌린다.
+                context.Runtime.MarkFanActuated(context.NowUtc, 0.0);
             }
 
             context.Runtime.SetResult(ControlResult.DeviatingLow);
@@ -228,7 +230,9 @@ namespace Esam.Domain.Control
                         pv));
             }
 
-            double currentTarget = context.Fan.TargetRpm > 0.0 ? context.Fan.TargetRpm : context.Fan.Rpm;
+            // 적분 상태는 제어기가 마지막으로 지령한 값이다. 측정값이 아니다.
+            // 측정값을 쓰면 부하 때문에 MaxRpm 에 도달하지 못할 때 포화가 영영 감지되지 않는다.
+            double currentTarget = ResolveFanTarget(context);
             bool fanAtMax = currentTarget >= context.FanConfig.MaxRpm - context.FanConfig.RpmTolerance;
 
             if (fanAtMax)
@@ -263,13 +267,34 @@ namespace Esam.Domain.Control
                     context.Fan.Id, nextRpm, CommandPriority.Automatic,
                     Format("상한 이탈 {0:F2} Pa + 밸브 포화 → 팬 증속 {1:F0}→{2:F0} RPM",
                         pv, currentTarget, nextRpm)));
-                context.Runtime.MarkFanActuated(context.NowUtc);
+                context.Runtime.MarkFanActuated(context.NowUtc, nextRpm);
             }
 
             context.Runtime.SetResult(ControlResult.DeviatingHigh);
             return new ControlDecision(
                 ControlResult.DeviatingHigh, fanCommands,
                 Format("상한 이탈({0:F2} >= {1:F2} Pa) 대응 중 — 밸브 포화, 팬 증속", pv, high));
+        }
+
+        /// <summary>
+        /// 팬 제어의 현재값(적분 상태)을 구한다.
+        /// </summary>
+        /// <param name="context">제어 컨텍스트.</param>
+        /// <returns>마지막 지령값 [RPM]. 지령 이력이 없으면 측정값으로 대체한다.</returns>
+        /// <remarks>
+        /// 지령 이력이 없는 경우는 자동 운전 진입 직후뿐이다. 그때만 측정값을 쓴다.
+        /// 이후에는 항상 지령값을 쓴다.
+        /// </remarks>
+        private static double ResolveFanTarget(ChainControlContext context)
+        {
+            double? commanded = context.Runtime.LastFanCommandRpm;
+
+            if (commanded.HasValue)
+            {
+                return commanded.Value;
+            }
+
+            return context.Fan == null ? 0.0 : context.Fan.Rpm;
         }
 
         /// <summary>제어를 건너뛴 사유 문자열을 만든다.</summary>

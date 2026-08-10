@@ -161,6 +161,86 @@ namespace Esam.Tests
         }
 
         [Fact]
+        public void 팬이_부하로_최대회전수에_도달하지_못해도_포화를_감지한다()
+        {
+            // ★ 회귀 방지.
+            // 종전에는 팬의 '측정' RPM 으로 포화를 판정했다. 그런데 덕트 부하가 크면
+            // 팬은 MaxRpm 에 물리적으로 도달하지 못한다. 그 경우 포화 판정이 영영 성립하지 않아
+            // 제어기는 "아직 증속 여력이 있다"고 믿고 계속 올린다.
+            // 밸브가 이미 포화된 뒤 팬이 마지막 대응 수단인 구조에서,
+            // 제어 권한을 다 쓴 상태가 보고되지 않는 것은 위험한 불일치다.
+            ControlConfig config = Build.Config();          // MaxRpm 3000, Step 100, Dwell 0
+            ModeSetting mode = config.GetMode(SensorMode.Sensor2);
+            ChainRuntime runtime = new ChainRuntime(config.Chains[0]);
+
+            ValveState saturated = Build.Valve("V-1", 5000);
+
+            // 측정값은 부하 때문에 2000 RPM 에서 더 오르지 않는다.
+            const double StuckRpm = 2000.0;
+
+            DateTime now = Build.T0;
+            double lastCommand = 0.0;
+
+            // 지령이 MaxRpm 에 닿을 때까지 증속시킨다.
+            for (int i = 0; i < 40; i++)
+            {
+                ControlDecision step = _policy.Step(Build.Context(
+                    runtime, 30.0, saturated,
+                    Build.Fan("F-1", StuckRpm, StuckRpm),
+                    config, SensorMode.Sensor2, now));
+
+                if (step.Commands.Count > 0)
+                {
+                    lastCommand = step.Commands[0].Value;
+                }
+
+                if (step.Result == ControlResult.ErrorHigh)
+                {
+                    break;
+                }
+
+                now = now.AddMilliseconds(mode.TimeMs + 1);
+            }
+
+            // 지령은 MaxRpm 까지 올라갔어야 한다.
+            Assert.Equal(config.Fan.MaxRpm, lastCommand);
+
+            // 측정값은 여전히 2000 이지만 지령이 포화되었으므로 ErrorHigh 로 확정되어야 한다.
+            ControlDecision final = _policy.Step(Build.Context(
+                runtime, 30.0, saturated,
+                Build.Fan("F-1", StuckRpm, StuckRpm),
+                config, SensorMode.Sensor2, now.AddMilliseconds(mode.TimeMs + 1)));
+
+            Assert.Equal(ControlResult.ErrorHigh, final.Result);
+            Assert.Empty(final.Commands);
+        }
+
+        [Fact]
+        public void 팬_지령은_측정값이_아니라_직전_지령값에서_증가한다()
+        {
+            // 팬이 아직 램프업 중이면 측정값은 지령보다 낮다.
+            // 측정값을 적분 상태로 쓰면 매 스텝이 뒤처진 값에서 계산되어 증속이 지연된다.
+            ControlConfig config = Build.Config();
+            ChainRuntime runtime = new ChainRuntime(config.Chains[0]);
+            ValveState saturated = Build.Valve("V-1", 5000);
+
+            // 1회차: 지령 이력이 없으므로 측정값 1000 에서 출발한다.
+            ControlDecision first = _policy.Step(Build.Context(
+                runtime, 30.0, saturated, Build.Fan("F-1", 1000, 1000),
+                config, SensorMode.Sensor2, Build.T0));
+
+            Assert.Equal(1100.0, first.Commands[0].Value);
+
+            // 2회차: 팬은 아직 1010 RPM 까지만 올라왔다.
+            // 측정값 기준이면 1110 이 되겠지만, 지령 기준이면 1200 이어야 한다.
+            ControlDecision second = _policy.Step(Build.Context(
+                runtime, 30.0, saturated, Build.Fan("F-1", 1010, 1010),
+                config, SensorMode.Sensor2, Build.T0.AddSeconds(1)));
+
+            Assert.Equal(1200.0, second.Commands[0].Value);
+        }
+
+        [Fact]
         public void 팬_MaxRpm이_미설정이면_밸브포화_후_증속하지_않고_Skip한다()
         {
             // DESIGN.md Open Issue #20 — 팬 사양 미확보 상태 보호 동작
