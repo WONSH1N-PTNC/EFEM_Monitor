@@ -27,16 +27,38 @@ namespace Esam.Domain.Alarms
         /// <summary>전 체인 정지가 필요한지 여부.</summary>
         public bool RequiresSystemStop { get; private set; }
 
+        /// <summary>
+        /// 측정값을 신뢰할 수 없어 판정하지 못한 체인 번호 목록.
+        /// </summary>
+        /// <remarks>
+        /// <para><b>"발동하지 않음" 과 "판정하지 못함" 은 다르다.</b> 둘 다 Trips 가 비어 있지만,
+        /// 후자는 인터록이 눈을 감고 있는 상태다. 구분하지 않으면 상위는 안전하다고 오해한다.</para>
+        /// <para>정책 판단(몇 사이클까지 봐줄 것인가, 넘으면 무엇을 할 것인가)은
+        /// 이 계층이 아니라 조립 루트가 한다. 여기서는 사실만 보고한다.</para>
+        /// </remarks>
+        public IList<int> UnjudgeableChainIds { get; private set; }
+
+        /// <summary>판정하지 못한 체인이 있는지 여부.</summary>
+        public bool HasUnjudgeableChain
+        {
+            get { return UnjudgeableChainIds.Count > 0; }
+        }
+
         /// <summary>인터록 판정 결과를 생성한다.</summary>
         /// <param name="trips">발동 목록.</param>
         /// <param name="commands">실행할 지령 목록.</param>
         /// <param name="requiresSystemStop">전 체인 정지 필요 여부.</param>
+        /// <param name="unjudgeableChainIds">측정값 불신으로 판정하지 못한 체인 목록.</param>
         public InterlockEvaluation(
-            IList<InterlockTrip> trips, IList<ActuatorCommand> commands, bool requiresSystemStop)
+            IList<InterlockTrip> trips,
+            IList<ActuatorCommand> commands,
+            bool requiresSystemStop,
+            IList<int> unjudgeableChainIds)
         {
             Trips = trips ?? new List<InterlockTrip>();
             Commands = commands ?? new List<ActuatorCommand>();
             RequiresSystemStop = requiresSystemStop;
+            UnjudgeableChainIds = unjudgeableChainIds ?? new List<int>();
         }
     }
 
@@ -251,11 +273,12 @@ namespace Esam.Domain.Alarms
         {
             List<InterlockTrip> trips = new List<InterlockTrip>();
             List<ActuatorCommand> commands = new List<ActuatorCommand>();
+            List<int> unjudgeable = new List<int>();
             bool systemStop = false;
 
             if (snapshot == null || config == null)
             {
-                return new InterlockEvaluation(trips, commands, false);
+                return new InterlockEvaluation(trips, commands, false, unjudgeable);
             }
 
             // 포트마다 워커 스레드가 하나이므로 이 메서드는 동시에 호출된다.
@@ -291,14 +314,14 @@ namespace Esam.Domain.Alarms
                 {
                     // 전체 정지 시에는 체인별 판정을 생략하고 모든 액추에이터에 정지 지령을 낸다.
                     AppendStopCommands(config.Chains, commands, "인터록: 전 체인 안전 정지");
-                    return new InterlockEvaluation(trips, commands, true);
+                    return new InterlockEvaluation(trips, commands, true, unjudgeable);
                 }
 
                 // ── IL-01: 센서 3 상한 도달 (체인 단위) ───────────────────────────
                 bool il01SystemWide =
-                    EvaluateSensor3HighLimit(snapshot, config, nowUtc, trips, commands);
+                    EvaluateSensor3HighLimit(snapshot, config, nowUtc, trips, commands, unjudgeable);
 
-                return new InterlockEvaluation(trips, commands, il01SystemWide);
+                return new InterlockEvaluation(trips, commands, il01SystemWide, unjudgeable);
             }
         }
 
@@ -359,7 +382,8 @@ namespace Esam.Domain.Alarms
             ControlConfig config,
             DateTime nowUtc,
             List<InterlockTrip> trips,
-            List<ActuatorCommand> commands)
+            List<ActuatorCommand> commands,
+            List<int> unjudgeable)
         {
             InterlockRule rule;
             if (!_rules.TryGetValue("IL-01", out rule) || !rule.Enabled)
@@ -403,8 +427,19 @@ namespace Esam.Domain.Alarms
                 bool latched = _latched.Contains(key);
 
                 PressureReading reading = snapshot.FindPressure(chain.Sensor3Id);
-                if (reading == null || reading.Quality != Quality.Good)
+
+                // 품질 표시만으로는 부족하다. SnapshotBuilder 의 Stale 임계값은 Slow 티어까지
+                // 덮어야 해서 15초로 잡혀 있어, Fast 센서가 14초 갱신되지 않아도 Good 으로 남는다.
+                // 250ms 응답을 목표로 하는 안전 기능이 15초 낡은 값으로 판정해서는 안 된다.
+                bool tooOld = reading != null
+                              && rule.MaxDataAgeMs > 0.0
+                              && (nowUtc - reading.LastUpdateUtc).TotalMilliseconds > rule.MaxDataAgeMs;
+
+                if (reading == null || reading.Quality != Quality.Good || tooOld)
                 {
+                    // "발동하지 않음" 이 아니라 "판정하지 못함" 이다. 상위가 구분할 수 있어야 한다.
+                    unjudgeable.Add(chain.Id);
+
                     // 센서 3 을 읽을 수 없으면 새로 발동시킬 수는 없다(오동작 방지).
                     // 다만 이미 래치된 인터록을 값 없음으로 풀어주지도 않는다.
                     if (latched)

@@ -14,7 +14,10 @@ namespace Esam.Services
         InterlockCommandFailed = 1,
 
         /// <summary>인터록이 발동했는데 액추에이터가 안전 위치로 가지 않았다.</summary>
-        InterlockNotEffective = 2
+        InterlockNotEffective = 2,
+
+        /// <summary>측정값을 신뢰할 수 없어 인터록이 판정 자체를 하지 못하고 있다.</summary>
+        InterlockBlind = 3
     }
 
     /// <summary>런타임 장애 정보.</summary>
@@ -83,6 +86,7 @@ namespace Esam.Services
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
         private int _consecutiveEvaluationFailures;
+        private int _consecutiveBlindCycles;
         private long _totalEvaluationFailures;
         private long _totalInterlockCommandFailures;
         private Exception _lastEvaluationException;
@@ -100,6 +104,8 @@ namespace Esam.Services
             CommandFailureThreshold = commandFailureThreshold > 0
                 ? commandFailureThreshold
                 : 3;
+
+            BlindCycleThreshold = 8;
         }
 
         /// <summary>기본 임계값으로 생성한다.</summary>
@@ -117,6 +123,15 @@ namespace Esam.Services
 
         /// <summary>인터록 지령 실패 연속 허용 횟수.</summary>
         public int CommandFailureThreshold { get; private set; }
+
+        /// <summary>
+        /// 인터록이 판정하지 못한 상태를 허용할 연속 사이클 수. 기본 8.
+        /// </summary>
+        /// <remarks>
+        /// 250 ms 폴링에서 약 2초다. 지령 실패(3회)보다 관대한 이유는,
+        /// 기동 직후나 센서 재연결 중에는 일시적으로 판정할 수 없는 것이 정상이기 때문이다.
+        /// </remarks>
+        public int BlindCycleThreshold { get; set; }
 
         /// <summary>현재 연속된 판정 예외 횟수.</summary>
         public int ConsecutiveEvaluationFailures
@@ -268,12 +283,59 @@ namespace Esam.Services
             RaiseFault(RuntimeFaultKind.InterlockNotEffective, detail, 1, null, nowUtc);
         }
 
+        /// <summary>
+        /// 인터록이 측정값을 신뢰할 수 없어 판정하지 못하고 있음을 기록한다.
+        /// </summary>
+        /// <param name="detail">설명.</param>
+        /// <param name="nowUtc">발생 시각(UTC).</param>
+        /// <returns>연속 횟수가 임계를 넘었으면 true.</returns>
+        /// <remarks>
+        /// <b>"발동하지 않음" 과 "판정하지 못함" 은 다르다.</b> 후자는 인터록이 눈을 감은 상태다.
+        /// 센서 3 을 읽지 못하면 배기 상실을 감지할 수단이 없으므로,
+        /// 안전 기능이 동작하지 못하는 상태로 취급한다.
+        /// </remarks>
+        public bool RecordInterlockBlind(string detail, DateTime nowUtc)
+        {
+            int count;
+
+            lock (_gate)
+            {
+                _consecutiveBlindCycles++;
+                count = _consecutiveBlindCycles;
+                _lastDetail = detail;
+            }
+
+            if (count < BlindCycleThreshold)
+            {
+                return false;
+            }
+
+            RaiseFault(RuntimeFaultKind.InterlockBlind, detail, count, null, nowUtc);
+            return true;
+        }
+
+        /// <summary>인터록이 정상적으로 판정했음을 기록한다.</summary>
+        public void RecordInterlockJudged()
+        {
+            lock (_gate)
+            {
+                _consecutiveBlindCycles = 0;
+            }
+        }
+
+        /// <summary>현재 연속된 판정 불가 사이클 수.</summary>
+        public int ConsecutiveBlindCycles
+        {
+            get { lock (_gate) { return _consecutiveBlindCycles; } }
+        }
+
         /// <summary>모든 카운터를 초기화한다. 장애 해제 후 호출한다.</summary>
         public void Reset()
         {
             lock (_gate)
             {
                 _consecutiveEvaluationFailures = 0;
+                _consecutiveBlindCycles = 0;
                 _commandFailures.Clear();
                 _lastEvaluationException = null;
                 _lastDetail = null;

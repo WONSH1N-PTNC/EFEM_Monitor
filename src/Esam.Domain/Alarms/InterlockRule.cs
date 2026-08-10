@@ -54,6 +54,20 @@ namespace Esam.Domain.Alarms
         /// </remarks>
         public double? ThresholdPa { get; set; }
 
+        /// <summary>
+        /// 판정에 사용할 수 있는 측정값의 최대 나이 [ms]. 0 이하이면 검사하지 않는다.
+        /// </summary>
+        /// <remarks>
+        /// <para>스냅샷의 품질 표시만으로는 부족하다. <c>SnapshotBuilder</c> 의 Stale 임계값은
+        /// Slow 티어(5초 주기)까지 덮어야 해서 15초로 잡혀 있다. 그래서 Fast 티어 센서가
+        /// <b>14초 동안 갱신되지 않아도 품질은 여전히 Good</b> 이다.</para>
+        /// <para>인터록의 응답 목표는 250 ms 다. 15초 낡은 값으로 판정하면 두 방향으로 틀린다.
+        /// 이미 해소된 조건으로 발동하거나, 실제로 상승한 압력을 14초 동안 놓친다.</para>
+        /// <para>기본값 1000 ms 는 Fast 폴링(250 ms)의 4배다. 한두 사이클 실패는 넘기고
+        /// 지속적 갱신 중단은 잡는다.</para>
+        /// </remarks>
+        public double MaxDataAgeMs { get; set; }
+
         /// <summary>기본값으로 초기화한다.</summary>
         public InterlockRule()
         {
@@ -62,6 +76,7 @@ namespace Esam.Domain.Alarms
             ResetPolicy = AlarmResetPolicy.Manual;
             ClearHysteresisPa = 0.0;
             ThresholdPa = null;
+            MaxDataAgeMs = 1000.0;
         }
     }
 

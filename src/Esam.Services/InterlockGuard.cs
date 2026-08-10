@@ -31,6 +31,15 @@ namespace Esam.Services
         private readonly ControlConfig _config;
         private readonly IClock _clock;
         private readonly List<ModbusPortWorker> _workers = new List<ModbusPortWorker>();
+
+        /// <summary>디바이스 ID → 담당 워커. 지령을 담당 포트에만 보내기 위한 경로표.</summary>
+        private readonly Dictionary<string, ModbusPortWorker> _owners =
+            new Dictionary<string, ModbusPortWorker>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>디바이스별 마지막 지령 투입 시각. 반복 투입을 억제한다.</summary>
+        private readonly Dictionary<string, DateTime> _lastDispatchUtc =
+            new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+
         private readonly object _gate = new object();
 
         private bool _wasTripped;
@@ -50,7 +59,20 @@ namespace Esam.Services
             _evaluator = evaluator ?? new InterlockEvaluator(InterlockEvaluator.CreateDefaultRules());
             _config = config;
             _clock = clock ?? SystemClock.Instance;
+            ReassertIntervalMs = 2000;
         }
+
+        /// <summary>
+        /// 같은 장치에 인터록 지령을 다시 보내기까지의 최소 간격 [ms]. 기본 2000.
+        /// </summary>
+        /// <remarks>
+        /// <para>인터록은 래치되므로 발동이 지속되는 동안 매 사이클 같은 지령이 만들어진다.
+        /// 그것을 그대로 투입하면 <b>안전 기능이 활성인 동안 버스가 가장 바빠진다.</b>
+        /// 폴링 사이클이 늘어나 2차 위험 검출이 늦어지는데, 이는 정확히 반대로 가는 것이다.</para>
+        /// <para>그렇다고 한 번만 보내면 지령이 유실됐을 때 복구할 방법이 없다.
+        /// 주기적으로 다시 확인 사살하되 간격을 둔다.</para>
+        /// </remarks>
+        public int ReassertIntervalMs { get; set; }
 
         /// <summary>현재 인터록이 발동 중인지 여부.</summary>
         public bool IsTripped
@@ -77,6 +99,28 @@ namespace Esam.Services
         /// <param name="worker">포트 워커.</param>
         public void RegisterWorker(ModbusPortWorker worker)
         {
+            RegisterWorker(worker, null);
+        }
+
+        /// <summary>
+        /// 지령을 투입할 포트 워커를 담당 디바이스 목록과 함께 등록한다.
+        /// </summary>
+        /// <param name="worker">포트 워커.</param>
+        /// <param name="ownedDeviceIds">이 워커가 담당하는 디바이스 ID 목록. null 이면 경로표에 넣지 않는다.</param>
+        /// <remarks>
+        /// <para>담당 목록을 주면 지령을 <b>담당 워커에만</b> 보낸다.
+        /// 종전에는 전 워커에 뿌리고 담당하지 않는 워커가 무시하게 했다.
+        /// "안전 경로에서 라우팅 판단을 하다 실수하는 것보다 확실하다" 는 이유였는데,
+        /// 대가가 컸다.</para>
+        /// <para>2포트 구성에서 래치 1건이면 사이클당 2회 평가 × 2 워커 × 2 지령 = 8회 enqueue 이고,
+        /// 그중 절반은 담당하지 않는 워커에서 실패한다. 실패는 <c>CommandFailed</c> 로 흘러
+        /// 진단 카운터를 오염시키고, 담당 워커는 같은 지령을 중복 실행한다.
+        /// <b>안전 기능이 활성인 동안 버스가 가장 바빠져</b> 2차 위험 검출이 늦어진다.</para>
+        /// <para>라우팅 실수 우려는 구성 검증으로 해소한다. device-map 은 조립 시점에
+        /// 이미 검증되므로, 매 사이클 추측하는 것보다 한 번 확인한 표를 쓰는 편이 확실하다.</para>
+        /// </remarks>
+        public void RegisterWorker(ModbusPortWorker worker, IEnumerable<string> ownedDeviceIds)
+        {
             if (worker == null)
             {
                 return;
@@ -87,6 +131,19 @@ namespace Esam.Services
                 if (!_workers.Contains(worker))
                 {
                     _workers.Add(worker);
+                }
+
+                if (ownedDeviceIds == null)
+                {
+                    return;
+                }
+
+                foreach (string deviceId in ownedDeviceIds)
+                {
+                    if (!string.IsNullOrEmpty(deviceId))
+                    {
+                        _owners[deviceId] = worker;
+                    }
                 }
             }
         }
@@ -153,6 +210,12 @@ namespace Esam.Services
         public void Reset(string ruleId)
         {
             _evaluator.Reset(ruleId);
+
+            // 재투입 이력을 비운다. Reset 후 다시 발동하면 지령이 즉시 나가야 한다.
+            lock (_gate)
+            {
+                _lastDispatchUtc.Clear();
+            }
         }
 
         /// <summary>적용 중인 인터록 규칙을 조회한다.</summary>
@@ -183,22 +246,108 @@ namespace Esam.Services
                 return;
             }
 
-            List<ModbusPortWorker> targets;
+            DateTime nowUtc = _clock.UtcNow;
+
+            // 담당 워커별로 모아서 한 번에 넣는다.
+            Dictionary<ModbusPortWorker, List<ActuatorCommand>> byWorker =
+                new Dictionary<ModbusPortWorker, List<ActuatorCommand>>();
+
+            List<ModbusPortWorker> broadcast = null;
 
             lock (_gate)
             {
-                targets = new List<ModbusPortWorker>(_workers);
+                foreach (ActuatorCommand command in commands)
+                {
+                    if (!ShouldDispatch(command, nowUtc))
+                    {
+                        continue;
+                    }
+
+                    ModbusPortWorker owner;
+
+                    if (!_owners.TryGetValue(command.DeviceId ?? string.Empty, out owner))
+                    {
+                        // 경로표에 없는 장치는 안전하게 전 워커로 보낸다.
+                        // 구성이 불완전할 때 지령을 아예 못 보내는 것보다는 낫다.
+                        if (broadcast == null)
+                        {
+                            broadcast = new List<ActuatorCommand>();
+                        }
+
+                        broadcast.Add(command);
+                        continue;
+                    }
+
+                    List<ActuatorCommand> list;
+
+                    if (!byWorker.TryGetValue(owner, out list))
+                    {
+                        list = new List<ActuatorCommand>();
+                        byWorker[owner] = list;
+                    }
+
+                    list.Add(command);
+                }
             }
 
-            foreach (ModbusPortWorker worker in targets)
+            foreach (KeyValuePair<ModbusPortWorker, List<ActuatorCommand>> pair in byWorker)
             {
                 // 대기 중인 자동 지령을 먼저 버린다.
                 // 큐가 장치 단위로 하위 우선순위를 정리하지만, 인터록 지령이 실행된 *뒤에*
                 // 제어 엔진이 넣은 자동 지령은 그 정리를 거치지 않는다.
                 // 남겨두면 인터록이 닫은 밸브를 다음 사이클에 다시 연다.
-                worker.ClearAutomaticCommands();
-                worker.EnqueueCommands(commands);
+                pair.Key.ClearAutomaticCommands();
+                pair.Key.EnqueueCommands(pair.Value);
             }
+
+            if (broadcast == null)
+            {
+                return;
+            }
+
+            List<ModbusPortWorker> all;
+
+            lock (_gate)
+            {
+                all = new List<ModbusPortWorker>(_workers);
+            }
+
+            foreach (ModbusPortWorker worker in all)
+            {
+                worker.ClearAutomaticCommands();
+                worker.EnqueueCommands(broadcast);
+            }
+        }
+
+        /// <summary>
+        /// 이번 사이클에 이 지령을 실제로 투입할지 판정한다. 반드시 락 안에서 호출한다.
+        /// </summary>
+        /// <param name="command">지령.</param>
+        /// <param name="nowUtc">현재 시각(UTC).</param>
+        /// <returns>투입해야 하면 true.</returns>
+        /// <remarks>
+        /// 인터록은 래치되므로 발동이 지속되는 동안 매 사이클 같은 지령이 만들어진다.
+        /// 처음에는 즉시 보내고, 이후에는 <see cref="ReassertIntervalMs"/> 간격으로만 다시 보낸다.
+        /// 한 번만 보내고 마는 것도 안 된다. 지령이 유실되면 복구할 방법이 없어진다.
+        /// </remarks>
+        private bool ShouldDispatch(ActuatorCommand command, DateTime nowUtc)
+        {
+            if (command == null || string.IsNullOrEmpty(command.DeviceId))
+            {
+                return false;
+            }
+
+            string key = command.DeviceId + "|" + command.Kind;
+            DateTime last;
+
+            if (_lastDispatchUtc.TryGetValue(key, out last)
+                && (nowUtc - last).TotalMilliseconds < ReassertIntervalMs)
+            {
+                return false;
+            }
+
+            _lastDispatchUtc[key] = nowUtc;
+            return true;
         }
 
         /// <summary>발동 이벤트를 일으킨다.</summary>

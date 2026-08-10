@@ -507,7 +507,17 @@ namespace Esam.Services
                 _workers.Add(worker);
 
                 Engine.RegisterWorker(worker);
-                Interlock.RegisterWorker(worker);
+
+                // 담당 디바이스 목록을 함께 준다. 지령을 전 워커에 뿌리지 않고
+                // 담당 포트에만 보내기 위한 경로표다.
+                List<string> ownedIds = new List<string>();
+
+                foreach (DeviceInstanceDefinition owned in devices)
+                {
+                    ownedIds.Add(owned.Id);
+                }
+
+                Interlock.RegisterWorker(worker, ownedIds);
 
                 // 폴링 완료 → 스냅샷 조립 → 인터록 즉시 판정.
                 // 세 단계가 같은(워커) 스레드에서 연달아 일어나므로 지연이 최소다.
@@ -589,6 +599,7 @@ namespace Esam.Services
 
                 ReconcileInterlock(evaluation);
                 VerifyInterlockEffect(evaluation, snapshot);
+                VerifyInterlockVision(evaluation);
 
                 if (Alarms != null)
                 {
@@ -611,6 +622,51 @@ namespace Esam.Services
         }
 
         /// <summary>
+        /// 인터록이 판정 가능한 상태인지 확인한다.
+        /// </summary>
+        /// <param name="evaluation">이번 사이클 판정 결과.</param>
+        /// <remarks>
+        /// <para>자동 운전 중에만 확인한다. 기동 전이나 정지 중에는 측정값이 없는 것이 정상이고,
+        /// 액추에이터도 움직이지 않아 감시 공백이 위험으로 이어지지 않는다.</para>
+        /// <para>운전 중 센서 3 을 계속 읽지 못하면 <b>배기 상실을 감지할 수단이 없다.</b>
+        /// 인터록이 발동하지 않는 것과 판정하지 못하는 것을 같게 취급하면,
+        /// 눈을 감은 상태를 안전하다고 보고하게 된다.</para>
+        /// </remarks>
+        private void VerifyInterlockVision(InterlockEvaluation evaluation)
+        {
+            if (Engine.StateMachine.Phase != SystemPhase.AutoControl)
+            {
+                _diagnostics.RecordInterlockJudged();
+                return;
+            }
+
+            if (!evaluation.HasUnjudgeableChain)
+            {
+                _diagnostics.RecordInterlockJudged();
+                return;
+            }
+
+            string[] ids = new string[evaluation.UnjudgeableChainIds.Count];
+
+            for (int i = 0; i < ids.Length; i++)
+            {
+                ids[i] = evaluation.UnjudgeableChainIds[i].ToString(CultureInfo.InvariantCulture);
+            }
+
+            string chains = string.Join(", ", ids);
+
+            _diagnostics.RecordInterlockBlind(
+                string.Format(
+                    CultureInfo.InvariantCulture,
+                    "운전 중 체인 {0} 의 센서 3 을 신뢰할 수 없어 인터록이 판정하지 못하고 있습니다. "
+                    + "배기 상실을 감지할 수단이 없는 상태입니다.",
+                    chains),
+                _clock.UtcNow);
+        }
+
+        /// <summary>
+        /// 인터록 지령이 실제로 효력을 냈는지 확인한다.
+        /// </summary>        /// <summary>
         /// 인터록 지령이 실제로 효력을 냈는지 확인한다.
         /// </summary>
         /// <param name="evaluation">이번 사이클 판정 결과.</param>

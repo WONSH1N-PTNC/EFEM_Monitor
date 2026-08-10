@@ -888,6 +888,210 @@ namespace Esam.Tests
                 "인터록이 효력을 내지 못한 사실이 보고되지 않았습니다.");
         }
 
+        // ── S5: 데이터 신선도와 지령 라우팅 (D8, D7) ──────────────────────────
+
+        [Fact]
+        public void 낡은_측정값으로는_인터록을_판정하지_않는다()
+        {
+            // ★ D8. SnapshotBuilder 의 Stale 임계값은 Slow 티어까지 덮어야 해서 15초다.
+            // 그래서 Fast 센서가 14초 갱신되지 않아도 품질은 Good 으로 남는다.
+            // 250ms 응답을 목표로 하는 안전 기능이 그 값으로 판정해서는 안 된다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 100);
+
+            // 배기를 상실시키되 센서는 갱신되지 않게 한다.
+            LoseExhaust(runtime);
+            runtime.Plant.Advance(2.0);
+
+            // 시계만 앞으로 돌린다. 폴링을 하지 않으므로 측정값이 낡는다.
+            _clock.AdvanceMs(5000);
+
+            InterlockEvaluation evaluation = runtime.Interlock.Evaluate(runtime.Store.Current);
+
+            // 값이 낡았으므로 새로 발동시키지 않고, 판정 불가로 보고해야 한다.
+            Assert.True(
+                evaluation.HasUnjudgeableChain,
+                "낡은 값을 판정 불가로 보고하지 않았습니다.");
+        }
+
+        [Fact]
+        public void 신선한_값이면_판정_불가로_보고하지_않는다()
+        {
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 20);
+
+            InterlockEvaluation evaluation = runtime.Interlock.Evaluate(runtime.Store.Current);
+
+            Assert.False(evaluation.HasUnjudgeableChain);
+            Assert.Equal(0, runtime.Diagnostics.ConsecutiveBlindCycles);
+        }
+
+        [Fact]
+        public void 운전_중_판정_불가가_계속되면_SafeStop으로_보낸다()
+        {
+            // 센서 3 을 읽지 못하면 배기 상실을 감지할 수단이 없다.
+            // "발동하지 않음" 과 "판정하지 못함" 을 같게 취급하면
+            // 눈을 감은 상태를 안전하다고 보고하게 된다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 20);
+
+            // 센서 3 전량(슬레이브 9~13)을 분리한다.
+            SimulatedModbusTransport bus = Transport(runtime, "CH1");
+
+            for (byte slave = 9; slave <= 13; slave++)
+            {
+                Assert.True(bus.DetachSlave(slave));
+            }
+
+            for (int i = 0; i < runtime.Diagnostics.BlindCycleThreshold + 4; i++)
+            {
+                PollAll(runtime);
+                _clock.AdvanceMs(250);
+            }
+
+            Assert.Equal(SystemPhase.SafeStop, runtime.Engine.StateMachine.Phase);
+        }
+
+        [Fact]
+        public void 정지_중에는_판정_불가를_문제로_보지_않는다()
+        {
+            // 기동 전에는 측정값이 없는 것이 정상이고, 액추에이터도 움직이지 않는다.
+            EsamRuntime runtime = CreateRuntime();
+
+            SimulatedModbusTransport bus = Transport(runtime, "CH1");
+
+            for (byte slave = 9; slave <= 13; slave++)
+            {
+                bus.DetachSlave(slave);
+            }
+
+            for (int i = 0; i < runtime.Diagnostics.BlindCycleThreshold + 4; i++)
+            {
+                PollAll(runtime);
+                _clock.AdvanceMs(250);
+            }
+
+            Assert.Equal(0, runtime.Diagnostics.ConsecutiveBlindCycles);
+            Assert.NotEqual(SystemPhase.SafeStop, runtime.Engine.StateMachine.Phase);
+        }
+
+        [Fact]
+        public void 인터록_지령은_담당_포트에만_투입된다()
+        {
+            // ★ D7. 종전에는 전 워커에 뿌리고 담당하지 않는 워커가 무시하게 했다.
+            // 담당하지 않는 워커에서는 반드시 실패하므로 CommandFailed 가 쏟아지고,
+            // 담당 워커는 같은 지령을 중복 실행한다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 100);
+
+            int failures = 0;
+
+            foreach (ModbusPortWorker worker in runtime.Workers)
+            {
+                worker.CommandFailed += (sender, e) =>
+                {
+                    if (e.Command.Priority == CommandPriority.Interlock)
+                    {
+                        failures++;
+                    }
+                };
+            }
+
+            LoseExhaust(runtime);
+            RunLoop(runtime, 20);
+
+            Assert.True(runtime.Interlock.IsTripped);
+
+            // 밸브·팬은 모두 CH2 담당이다. 담당 포트로만 갔다면 실패가 없어야 한다.
+            Assert.Equal(0, failures);
+        }
+
+        [Fact]
+        public void 인터록_지령은_매_사이클_반복_투입하지_않는다()
+        {
+            // 인터록은 래치되므로 발동이 지속되는 동안 매 사이클 같은 지령이 만들어진다.
+            // 그대로 투입하면 안전 기능이 활성인 동안 버스가 가장 바빠져
+            // 2차 위험 검출이 늦어진다. 정확히 반대로 가는 것이다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 100);
+
+            LoseExhaust(runtime);
+            runtime.Plant.Advance(2.0);
+
+            // 첫 발동에서는 지령이 나간다.
+            PollAll(runtime);
+            Assert.True(runtime.Interlock.IsTripped);
+
+            int pendingAfterFirst = 0;
+
+            foreach (ModbusPortWorker worker in runtime.Workers)
+            {
+                pendingAfterFirst += worker.PendingCommandCount;
+            }
+
+            // 시간을 진행시키지 않고 여러 사이클을 돌려도 지령이 쌓이지 않아야 한다.
+            for (int i = 0; i < 10; i++)
+            {
+                runtime.Interlock.Evaluate(runtime.Store.Current);
+            }
+
+            int pendingAfterRepeat = 0;
+
+            foreach (ModbusPortWorker worker in runtime.Workers)
+            {
+                pendingAfterRepeat += worker.PendingCommandCount;
+            }
+
+            Assert.Equal(pendingAfterFirst, pendingAfterRepeat);
+        }
+
+        [Fact]
+        public void 재투입_간격이_지나면_다시_확인_사살한다()
+        {
+            // 한 번만 보내고 마는 것도 안 된다. 지령이 유실되면 복구할 방법이 없어진다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 100);
+
+            LoseExhaust(runtime);
+            runtime.Plant.Advance(2.0);
+            PollAll(runtime);
+
+            Assert.True(runtime.Interlock.IsTripped);
+
+            // 큐를 비운 뒤 재투입 간격을 넘긴다.
+            PollAll(runtime);
+            _clock.AdvanceMs(runtime.Interlock.ReassertIntervalMs + 100);
+
+            runtime.Interlock.Evaluate(runtime.Store.Current);
+
+            int pending = 0;
+
+            foreach (ModbusPortWorker worker in runtime.Workers)
+            {
+                pending += worker.PendingCommandCount;
+            }
+
+            Assert.True(pending > 0, "재투입 간격이 지났는데도 지령이 다시 나가지 않았습니다.");
+        }
+
         // ── S5: 기동 시퀀스 (D3) ────────────────────────────────────────────────
 
         [Fact]
