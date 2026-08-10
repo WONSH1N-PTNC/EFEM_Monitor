@@ -92,6 +92,20 @@ namespace Esam.Services
             }
         }
 
+        /// <summary>
+        /// 자동 운전 진입 전 확인할 추가 조건. null 이면 검사하지 않는다.
+        /// </summary>
+        /// <remarks>
+        /// <para>진입 가능하면 null 을, 불가하면 거부 사유를 반환하는 함수다.
+        /// 조립 루트가 "안전 기능이 동작하지 않는 구성인지" 를 여기에 물린다.</para>
+        /// <para>제어 엔진이 구성 경고를 직접 알게 하지 않는 이유는, 그러면
+        /// Domain·Services 계층이 조립 관심사를 떠안기 때문이다. 판정 결과만 받는다.</para>
+        /// </remarks>
+        public Func<string> AutoEntryGuard { get; set; }
+
+        /// <summary>직전 자동 운전 요청이 거부된 사유. 성공했거나 요청이 없으면 null.</summary>
+        public string LastAutoRejectReason { get; private set; }
+
         /// <summary>시스템 상태머신. 화면과 인터록이 상태 전이를 요청한다.</summary>
         public SystemStateMachine StateMachine
         {
@@ -335,6 +349,51 @@ namespace Esam.Services
         }
 
         /// <summary>
+        /// 전 체인 액추에이터를 안전 위치로 보내는 지령을 투입한다.
+        /// </summary>
+        /// <param name="reason">지령 사유. 로그에 남는다.</param>
+        /// <returns>투입한 지령 수.</returns>
+        /// <remarks>
+        /// <para>프로그램 종료 시 호출한다. 종료하면 폴링 스레드가 멈춰
+        /// <b>인터록 평가도 함께 끝나는데</b>, 밸브는 열려 있고 팬은 계속 돈다.
+        /// 아무도 보지 않는 상태로 남는 것이 문제다.</para>
+        /// <para>자동 운전을 끄는 것(<see cref="StopAuto"/>)과는 다르다.
+        /// 그때는 폴링이 계속되므로 인터록이 지킨다. 웨이퍼 처리 중에 기류를 끊지 않기 위해
+        /// 액추에이터를 그대로 둔다.</para>
+        /// <para>우선순위는 <see cref="CommandPriority.Interlock"/> 이다.
+        /// 큐에 남은 자동·수동 지령보다 먼저 실행되어야 한다.</para>
+        /// </remarks>
+        public int ParkActuators(string reason)
+        {
+            List<ActuatorCommand> commands = new List<ActuatorCommand>();
+
+            foreach (ChainRuntime runtime in _runtimes)
+            {
+                ChainDefinition definition = runtime.Definition;
+
+                // 비활성 체인도 포함한다. 안전 정지에 예외를 두지 않는다.
+                if (!string.IsNullOrEmpty(definition.ValveId))
+                {
+                    commands.Add(ActuatorCommand.CloseValve(
+                        definition.ValveId, CommandPriority.Interlock, reason));
+                }
+
+                if (!string.IsNullOrEmpty(definition.FanId))
+                {
+                    commands.Add(ActuatorCommand.StopFan(
+                        definition.FanId, CommandPriority.Interlock, reason));
+                }
+            }
+
+            if (commands.Count > 0)
+            {
+                Dispatch(commands);
+            }
+
+            return commands.Count;
+        }
+
+        /// <summary>
         /// 초기화 단계를 진행한다. 모든 밸브를 읽을 수 있게 되면 원점 복귀로 넘어간다.
         /// </summary>
         /// <remarks>
@@ -462,13 +521,31 @@ namespace Esam.Services
 
             if (!_config.Validate(out errors))
             {
+                LastAutoRejectReason = "제어 설정 검증 실패: " + string.Join(" / ", ToArray(errors));
                 return false;
             }
 
             if (_config.Fan != null && !_config.Fan.IsUsableForAutoControl)
             {
+                LastAutoRejectReason =
+                    "송풍팬 회전수 사양이 확정되지 않아 증속 제어가 불가능합니다.";
                 return false;
             }
+
+            Func<string> guard = AutoEntryGuard;
+
+            if (guard != null)
+            {
+                string reason = guard();
+
+                if (!string.IsNullOrEmpty(reason))
+                {
+                    LastAutoRejectReason = reason;
+                    return false;
+                }
+            }
+
+            LastAutoRejectReason = null;
 
             // 팬 지령 적분 상태를 드라이버의 현재 설정값으로 맞춘다.
             // 이 단계가 없으면 수동 운전으로 이미 팬이 돌고 있어도 제어기는
@@ -646,6 +723,16 @@ namespace Esam.Services
                 CultureInfo.InvariantCulture,
                 "ControlEngine[{0}] 체인 {1}, 스텝 {2}, 직전 {3:F2} ms",
                 _stateMachine.Phase, _runtimes.Count, StepCount, LastStepMs);
+        }
+
+        /// <summary>문자열 목록을 배열로 만든다.</summary>
+        /// <param name="items">문자열 목록.</param>
+        /// <returns>배열.</returns>
+        private static string[] ToArray(IList<string> items)
+        {
+            string[] result = new string[items.Count];
+            items.CopyTo(result, 0);
+            return result;
         }
     }
 }

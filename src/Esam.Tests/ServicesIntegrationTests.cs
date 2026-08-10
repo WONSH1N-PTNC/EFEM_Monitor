@@ -246,6 +246,10 @@ namespace Esam.Tests
             _runtime = EsamRuntime.Create(
                 map ?? CreateMap(), control ?? CreateControl(), options, _clock);
 
+            // 이 구성에는 안전 입력 PLC 가 없어 차단 경고가 뜬다.
+            // 테스트는 그 사실을 알고 진행한다는 뜻으로 명시 확인한다.
+            _runtime.AcknowledgeWarnings();
+
             OpenTransports(_runtime);
             return _runtime;
         }
@@ -407,7 +411,7 @@ namespace Esam.Tests
 
             _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
 
-            Assert.Contains(_runtime.Warnings, w => w.Contains("IL-01"));
+            Assert.Contains(_runtime.Warnings, w => w.Message.Contains("IL-01"));
         }
 
         [Fact]
@@ -418,7 +422,7 @@ namespace Esam.Tests
             EsamRuntime runtime = CreateRuntime();
 
             Assert.False(runtime.Control.SafetyInputsConfigured);
-            Assert.Contains(runtime.Warnings, w => w.Contains("안전 입력"));
+            Assert.Contains(runtime.Warnings, w => w.Message.Contains("안전 입력"));
         }
 
         // ── 스냅샷 조립 ─────────────────────────────────────────────────────────
@@ -572,6 +576,172 @@ namespace Esam.Tests
             Assert.True(runtime.Engine.RequestAuto());
         }
 
+        // ── S5: 구성 경고와 종료 파킹 (D10, D5) ────────────────────────────────
+
+        [Fact]
+        public void 안전_기능이_빠진_구성에서는_자동_운전에_들어갈_수_없다()
+        {
+            // ★ D10. 종전에는 경고가 있어도 아무 일 없이 자동 운전이 시작됐다.
+            // 화면 연결(S7) 전에도 효력이 생기도록 진입 지점에서 막는다.
+            RuntimeOptions options = new RuntimeOptions();
+            options.Sensor1Ids = Sensor1Ids;
+
+            _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            OpenTransports(_runtime);
+
+            // 안전 입력 PLC 가 없으므로 차단 경고가 있어야 한다.
+            Assert.True(_runtime.HasBlockingWarnings);
+            Assert.False(_runtime.WarningsAcknowledged);
+
+            AdvanceToReady(_runtime);
+
+            Assert.False(_runtime.Engine.RequestAuto());
+            Assert.Contains("안전", _runtime.Engine.LastAutoRejectReason);
+            Assert.Equal(SystemPhase.Ready, _runtime.Engine.StateMachine.Phase);
+
+            // 명시 확인 후에만 진입할 수 있다.
+            _runtime.AcknowledgeWarnings();
+
+            Assert.True(_runtime.Engine.RequestAuto());
+            Assert.Equal(SystemPhase.AutoControl, _runtime.Engine.StateMachine.Phase);
+        }
+
+        [Fact]
+        public void 확인해도_경고_목록은_사라지지_않는다()
+        {
+            // 확인은 "없애는 것" 이 아니라 "인지했음을 기록하는 것" 이다.
+            // 목록이 사라지면 화면과 로그에서 근거가 없어진다.
+            EsamRuntime runtime = CreateRuntime();
+
+            Assert.True(runtime.WarningsAcknowledged);
+            Assert.True(runtime.HasBlockingWarnings);
+            Assert.NotEmpty(runtime.Warnings);
+        }
+
+        [Fact]
+        public void 구성_경고는_심각도로_구분된다()
+        {
+            // "안전 입력이 없다" 와 "MFC 주소가 미확정이다" 가 같은 무게로 섞이면
+            // 목록을 봐도 무엇이 중요한지 알 수 없다.
+            EsamRuntime runtime = CreateRuntime();
+
+            Assert.Contains(runtime.Warnings, w => w.IsBlocking);
+            Assert.Contains(runtime.Warnings, w => w.Code == "SAFE-01");
+
+            foreach (ConfigWarning warning in runtime.Warnings)
+            {
+                Assert.False(string.IsNullOrEmpty(warning.Code));
+                Assert.False(string.IsNullOrEmpty(warning.Message));
+            }
+        }
+
+        [Fact]
+        public void Describe는_경고_본문을_출력한다()
+        {
+            // 건수만 찍으면 로그를 봐도 원인을 알 수 없다.
+            EsamRuntime runtime = CreateRuntime();
+            string text = runtime.Describe();
+
+            Assert.Contains("안전 입력", text);
+            Assert.Contains("SAFE-01", text);
+        }
+
+        [Fact]
+        public void 종료하면_밸브가_닫히고_팬이_멈춘다()
+        {
+            // ★ D5. 종료하면 폴링이 멈춰 인터록 평가도 함께 끝난다.
+            // 그런데 밸브는 열려 있고 팬은 계속 돈다. 아무도 보지 않는 상태로 남는다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 100);
+
+            int pulseBefore;
+            int targetBefore;
+            bool homeBefore;
+            runtime.Plant.TryGetValve("V-1", out pulseBefore, out targetBefore, out homeBefore);
+            Assert.True(targetBefore > 0, "자동 제어가 밸브를 열어 둔 상태여야 한다.");
+
+            // 워커 스레드를 띄우지 않았으므로 파킹 대기는 건너뛴다.
+            // 지령은 큐에 남고, 사이클을 돌려 처리한다.
+            runtime.Stop(0);
+
+            PollAll(runtime);
+            runtime.Plant.Advance(6.0);
+            PollAll(runtime);
+
+            int pulse;
+            int target;
+            bool home;
+            runtime.Plant.TryGetValve("V-1", out pulse, out target, out home);
+
+            Assert.Equal(0, target);
+            Assert.Equal(0, pulse);
+
+            double rpm;
+            double targetRpm;
+            runtime.Plant.TryGetFan("F-1", out rpm, out targetRpm);
+            Assert.Equal(0.0, targetRpm);
+        }
+
+        [Fact]
+        public void 파킹은_비활성_체인도_포함한다()
+        {
+            // 안전 정지에 예외를 두지 않는다.
+            ControlConfig control = CreateControl();
+            control.Chains[0].Enabled = false;
+
+            EsamRuntime runtime = CreateRuntime(control);
+
+            // 체인 5조 × (밸브 Close + 팬 OFF) = 10건
+            Assert.Equal(10, runtime.Engine.ParkActuators("테스트"));
+        }
+
+        [Fact]
+        public void 자동_운전을_끄면_액추에이터를_그대로_둔다()
+        {
+            // 자동 제어를 끄는 것과 기류를 멈추는 것은 다른 요구다.
+            // 웨이퍼 처리 중에 송풍팬을 세우면 오히려 봉쇄가 무너진다.
+            // 폴링이 계속되므로 인터록이 지킨다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 100);
+
+            int pulseBefore;
+            int targetBefore;
+            bool home;
+            runtime.Plant.TryGetValve("V-1", out pulseBefore, out targetBefore, out home);
+            Assert.True(targetBefore > 0);
+
+            runtime.Engine.StopAuto();
+            PollAll(runtime);
+            runtime.Plant.Advance(2.0);
+            PollAll(runtime);
+
+            int pulseAfter;
+            int targetAfter;
+            runtime.Plant.TryGetValve("V-1", out pulseAfter, out targetAfter, out home);
+
+            Assert.Equal(targetBefore, targetAfter);
+            Assert.Equal(SystemPhase.Ready, runtime.Engine.StateMachine.Phase);
+        }
+
+        [Fact]
+        public void 알람_규칙이_기본_경로에서_로드된다()
+        {
+            // ★ D9. 종전에는 RuntimeOptions 가 AlarmRules 를 채우는 코드가 없어
+            // DESIGN 5.1 의 알람 31종이 어떤 구성에서도 동작하지 않았다.
+            EsamRuntime runtime = CreateRuntime();
+
+            Assert.NotNull(runtime.Alarms);
+            Assert.True(
+                runtime.Alarms.RuleCount >= 31,
+                "알람 규칙이 31종에 미치지 못합니다: " + runtime.Alarms.RuleCount);
+        }
+
         // ── S5: 기동 시퀀스 (D3) ────────────────────────────────────────────────
 
         [Fact]
@@ -722,6 +892,7 @@ namespace Esam.Tests
             options.InterlockRules = rules;
 
             _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            _runtime.AcknowledgeWarnings();
             OpenTransports(_runtime);
 
             AdvanceToReady(_runtime);
@@ -758,6 +929,7 @@ namespace Esam.Tests
             options.InterlockRules = rules;
 
             _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            _runtime.AcknowledgeWarnings();
             OpenTransports(_runtime);
 
             AdvanceToReady(_runtime);
@@ -1107,6 +1279,7 @@ namespace Esam.Tests
             options.AlarmRules = rules;
 
             _runtime = EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock);
+            _runtime.AcknowledgeWarnings();
             OpenTransports(_runtime);
 
             // 밸브 닫힘 상태의 압력은 +20 Pa 이므로 임계 10 Pa 를 넘는다.
@@ -1177,7 +1350,7 @@ namespace Esam.Tests
 
             EsamRuntime runtime = CreateRuntime(null, map);
 
-            Assert.Contains(runtime.Warnings, w => w.Contains("PLC-1"));
+            Assert.Contains(runtime.Warnings, w => w.Message.Contains("PLC-1"));
 
             // 폴링해도 예외가 나지 않고, PLC 입력은 NoData 로 남는다.
             PollAll(runtime);

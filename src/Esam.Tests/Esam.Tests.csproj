@@ -23,6 +23,19 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      실제 배포되는 설정 파일을 테스트 출력에 복사한다.
+      샘플을 따로 만들어 검증하면 배포본이 깨져도 테스트는 통과한다.
+    -->
+    <None Include="..\..\config\alarms.json" Link="config\alarms.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\config\device-map.json" Link="config\device-map.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Esam.Domain\Esam.Domain.csproj" />
     <ProjectReference Include="..\Esam.Communication\Esam.Communication.csproj" />
     <ProjectReference Include="..\Esam.Services\Esam.Services.csproj" />

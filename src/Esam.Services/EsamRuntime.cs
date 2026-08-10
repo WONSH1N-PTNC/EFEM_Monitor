@@ -35,8 +35,28 @@ namespace Esam.Services
         /// <summary>센서 1 디바이스 ID 목록.</summary>
         public IList<string> Sensor1Ids { get; set; }
 
-        /// <summary>알람 규칙 목록. null 이면 알람 평가를 하지 않는다.</summary>
+        /// <summary>
+        /// 알람 규칙 목록. null 이면 <see cref="AlarmRulesPath"/> 에서 읽는다.
+        /// </summary>
+        /// <remarks>
+        /// 테스트에서 규칙 몇 개만 넣고 검증할 때 직접 지정한다.
+        /// 실제 운전에서는 파일 로드를 쓴다.
+        /// </remarks>
         public IEnumerable<AlarmRule> AlarmRules { get; set; }
+
+        /// <summary>
+        /// 알람 규칙 파일 경로. 기본값 <c>config/alarms.json</c>.
+        /// </summary>
+        /// <remarks>
+        /// <para>종전에는 <see cref="AlarmRules"/> 가 null 이면 알람 평가를 아예 하지 않았고,
+        /// 이 값을 채우는 코드가 어디에도 없었다. 결과적으로 <b>DESIGN 5.1 의 알람 31종이
+        /// 어떤 구성에서도 동작하지 않았다.</b> 게다가 인터록 IL-01 의 주석은
+        /// "초기 배기 불량은 대역 이탈 알람이 잡는다" 고 적어 두어,
+        /// 존재하지 않는 기능에 안전 판단을 기대고 있었다.</para>
+        /// <para>그래서 기본값을 파일 경로로 두고, 파일이 없으면 <b>구성 경고</b>로 드러낸다.
+        /// 조용히 알람 없는 상태로 운전하는 것이 가장 위험하다.</para>
+        /// </remarks>
+        public string AlarmRulesPath { get; set; }
 
         /// <summary>인터록 규칙 목록. null 이면 기본 규칙을 사용한다.</summary>
         public IEnumerable<InterlockRule> InterlockRules { get; set; }
@@ -62,6 +82,7 @@ namespace Esam.Services
             Transport = TransportMode.Simulation;
             Sensor1Ids = new List<string> { "S1-1", "S1-2", "S1-3" };
             SimulationSeed = 20260805;
+            AlarmRulesPath = System.IO.Path.Combine("config", "alarms.json");
         }
     }
 
@@ -88,7 +109,10 @@ namespace Esam.Services
             new Dictionary<string, IModbusTransport>(StringComparer.OrdinalIgnoreCase);
 
         private readonly List<ModbusPortWorker> _workers = new List<ModbusPortWorker>();
-        private readonly List<string> _warnings = new List<string>();
+        private readonly List<ConfigWarning> _warnings = new List<ConfigWarning>();
+
+        /// <summary>차단 경고가 확인(Acknowledge)되었는지 여부.</summary>
+        private bool _warningsAcknowledged;
 
         private bool _disposed;
 
@@ -123,10 +147,73 @@ namespace Esam.Services
             get { return _workers; }
         }
 
-        /// <summary>구성 경고 목록(주소 미확정 등).</summary>
-        public IList<string> Warnings
+        /// <summary>구성 경고 목록.</summary>
+        public IList<ConfigWarning> Warnings
         {
             get { return _warnings; }
+        }
+
+        /// <summary>안전 기능이 동작하지 않는 경고가 하나라도 있는지 여부.</summary>
+        public bool HasBlockingWarnings
+        {
+            get
+            {
+                foreach (ConfigWarning warning in _warnings)
+                {
+                    if (warning.IsBlocking)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        }
+
+        /// <summary>차단 경고가 확인되었는지 여부.</summary>
+        public bool WarningsAcknowledged
+        {
+            get { return _warningsAcknowledged; }
+        }
+
+        /// <summary>
+        /// 차단 경고를 확인 처리해 자동 운전 진입을 허용한다.
+        /// </summary>
+        /// <remarks>
+        /// <para>경고를 없애는 것이 아니라 <b>사람이 인지했음을 기록</b>하는 것이다.
+        /// 목록은 그대로 남아 화면과 로그에 계속 표시된다.</para>
+        /// <para>안전 입력이 배선되지 않은 시운전 단계에서는 이 호출이 필요하다.
+        /// 매번 눌러야 하는 것이 번거롭게 느껴질 수 있지만, 그것이 목적이다.
+        /// 안전 기능 없이 운전 중이라는 사실을 한 번은 인지해야 한다.</para>
+        /// </remarks>
+        public void AcknowledgeWarnings()
+        {
+            _warningsAcknowledged = true;
+        }
+
+        /// <summary>
+        /// 자동 운전 진입 가능 여부를 판정한다. 제어 엔진이 호출한다.
+        /// </summary>
+        /// <returns>진입 가능하면 null, 불가하면 거부 사유.</returns>
+        private string CheckAutoEntry()
+        {
+            if (!HasBlockingWarnings || _warningsAcknowledged)
+            {
+                return null;
+            }
+
+            List<string> blocking = new List<string>();
+
+            foreach (ConfigWarning warning in _warnings)
+            {
+                if (warning.IsBlocking)
+                {
+                    blocking.Add(warning.Code + " " + warning.Message);
+                }
+            }
+
+            return "안전 기능이 동작하지 않는 구성입니다. 확인 후 진행하십시오: "
+                   + string.Join(" / ", blocking.ToArray());
         }
 
         /// <summary>
@@ -179,7 +266,10 @@ namespace Esam.Services
             EsamRuntime runtime = new EsamRuntime();
             runtime.Map = map;
             runtime.Control = control;
-            runtime._warnings.AddRange(mapWarnings);
+            foreach (string mapWarning in mapWarnings)
+            {
+                runtime._warnings.Add(ConfigWarning.Advisory("CFG-MAP", mapWarning, null));
+            }
 
             // ── 안전 입력 유무 판정 ──────────────────────────────────────────────
             // IL-04 는 "PLC 가 있는데 응답하지 않는" 경우에만 성립한다.
@@ -189,9 +279,11 @@ namespace Esam.Services
 
             if (!control.SafetyInputsConfigured)
             {
-                runtime._warnings.Add(
+                runtime._warnings.Add(ConfigWarning.Blocking(
+                    "SAFE-01",
                     "안전 입력 PLC 가 구성에 없습니다. EMO·메인 차단기·도어 인터록"
-                    + "(IL-02·IL-03·IL-04·IL-05)이 동작하지 않습니다. 실장비 운전 전에 반드시 배선해야 합니다.");
+                    + "(IL-02·IL-03·IL-04·IL-05)이 동작하지 않습니다.",
+                    "device-map.json 에 driver=Plc 디바이스를 추가하고 배선을 확인하십시오."));
             }
 
             // ── 2. 데이터 저장소 ─────────────────────────────────────────────────
@@ -199,9 +291,11 @@ namespace Esam.Services
             runtime.Store = new DataStore(builder, resolvedClock);
 
             // ── 3. 알람 / 인터록 ─────────────────────────────────────────────────
-            if (opts.AlarmRules != null)
+            IEnumerable<AlarmRule> alarmRules = ResolveAlarmRules(opts, runtime._warnings);
+
+            if (alarmRules != null)
             {
-                runtime.Alarms = new AlarmService(opts.AlarmRules, control, resolvedClock);
+                runtime.Alarms = new AlarmService(alarmRules, control, resolvedClock);
             }
 
             InterlockEvaluator evaluator = new InterlockEvaluator(opts.InterlockRules);
@@ -209,7 +303,15 @@ namespace Esam.Services
 
             // 미확정·비활성 인터록을 경고로 올린다. 검증 실패로 막지는 않는다.
             // 폴백값으로도 안전 기능은 동작해야 하고, 미확정 사실만 드러나면 된다.
-            evaluator.CollectWarnings(runtime._warnings);
+            List<string> interlockWarnings = new List<string>();
+            evaluator.CollectWarnings(interlockWarnings);
+
+            foreach (string text in interlockWarnings)
+            {
+                // 인터록이 비활성이거나 임계값이 미지정이면 안전 기능이 성립하지 않는다.
+                runtime._warnings.Add(ConfigWarning.Blocking(
+                    "SAFE-02", text, "interlocks 설정과 HW 배선을 확인하십시오."));
+            }
 
             // ── 4. 제어 엔진 ─────────────────────────────────────────────────────
             runtime.Engine = new ControlEngine(runtime.Store, control, null, resolvedClock);
@@ -217,9 +319,73 @@ namespace Esam.Services
             // ── 5. 전송 계층 + 포트 워커 ─────────────────────────────────────────
             runtime.BuildTransports(opts, resolvedClock);
 
+            // 안전 기능이 빠진 구성으로는 자동 운전에 들어갈 수 없게 막는다.
+            // 화면이 없는 단계에서도 효력이 생기도록 진입 지점에 건다.
+            runtime.Engine.AutoEntryGuard = runtime.CheckAutoEntry;
+
             // 상태머신 반영은 이벤트가 아니라 폴링마다 상태를 대조해 수행한다(ReconcileInterlock).
             // 이벤트 구독은 이력·화면용으로만 남긴다.
             return runtime;
+        }
+
+        /// <summary>
+        /// 알람 규칙을 확정한다. 직접 지정된 목록이 있으면 그것을, 없으면 파일을 읽는다.
+        /// </summary>
+        /// <param name="options">런타임 옵션.</param>
+        /// <param name="warnings">구성 경고 목록(출력).</param>
+        /// <returns>알람 규칙 목록. 확보하지 못하면 null.</returns>
+        /// <remarks>
+        /// 파일을 읽지 못해도 런타임 구성을 실패시키지 않는다. 알람은 통보 기능이므로
+        /// 없다고 해서 운전을 막을 이유는 없다. 다만 <b>알람이 하나도 없다는 사실</b>은
+        /// 반드시 경고로 드러낸다. 화면이 조용한 것과 이상이 없는 것은 다르다.
+        /// </remarks>
+        private static IEnumerable<AlarmRule> ResolveAlarmRules(
+            RuntimeOptions options, IList<ConfigWarning> warnings)
+        {
+            if (options.AlarmRules != null)
+            {
+                return options.AlarmRules;
+            }
+
+            if (string.IsNullOrEmpty(options.AlarmRulesPath))
+            {
+                warnings.Add(ConfigWarning.Blocking(
+                    "ALM-01",
+                    "알람 규칙 경로가 지정되지 않아 알람이 하나도 동작하지 않습니다.",
+                    "RuntimeOptions.AlarmRulesPath 를 지정하십시오."));
+
+                return null;
+            }
+
+            AlarmLoadResult result = AlarmConfigLoader.LoadFromFile(options.AlarmRulesPath);
+
+            // 개별 규칙 비활성·디바운스 경고는 참고 수준이다.
+            foreach (string warning in result.Warnings)
+            {
+                warnings.Add(ConfigWarning.Advisory("ALM-02", warning, null));
+            }
+
+            if (!result.IsSuccess)
+            {
+                foreach (string error in result.Errors)
+                {
+                    warnings.Add(ConfigWarning.Advisory("ALM-03", "알람 설정 오류: " + error, null));
+                }
+
+                // 알람이 전무한 상태는 안전 기능 부재와 같은 무게로 다룬다.
+                // 인터록이 걸리기 전에 알려 줄 수단이 하나도 없다는 뜻이다.
+                warnings.Add(ConfigWarning.Blocking(
+                    "ALM-01",
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "알람 규칙을 읽지 못했습니다({0}). 알람이 하나도 동작하지 않습니다.",
+                        options.AlarmRulesPath),
+                    "config/alarms.json 을 확인하십시오."));
+
+                return null;
+            }
+
+            return result.Rules;
         }
 
         /// <summary>
@@ -301,9 +467,12 @@ namespace Esam.Services
 
                     foreach (string skipped in deviceRuntime.SkippedGroups)
                     {
-                        _warnings.Add(string.Format(
-                            CultureInfo.InvariantCulture,
-                            "{0}.{1}: 주소 미확정으로 폴링에서 제외되었습니다.", device.Id, skipped));
+                        _warnings.Add(ConfigWarning.Advisory(
+                            "CFG-ADDR",
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0}.{1}: 주소 미확정으로 폴링에서 제외되었습니다.", device.Id, skipped),
+                            "레지스터 명세 확보 후 device-map.json 의 startAddress 를 채우십시오."));
                     }
                 }
 
@@ -359,10 +528,13 @@ namespace Esam.Services
                         // 시뮬레이션 슬레이브가 없는 장치(PLC·온습도·풍속)는 등록하지 않는다.
                         // 워커는 무응답을 타임아웃으로 처리하고, 스냅샷은 해당 값을 NoData 로 둔다.
                         // 이는 실제로 그 장치들의 레지스터 명세가 미확보인 현재 상태와 동일하다.
-                        _warnings.Add(string.Format(
-                            CultureInfo.InvariantCulture,
-                            "{0}({1}): 시뮬레이션 슬레이브가 없어 무응답으로 동작합니다.",
-                            device.Id, driver ?? "unknown"));
+                        _warnings.Add(ConfigWarning.Advisory(
+                            "SIM-01",
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "{0}({1}): 시뮬레이션 슬레이브가 없어 무응답으로 동작합니다.",
+                                device.Id, driver ?? "unknown"),
+                            null));
                         break;
                 }
             }
@@ -465,17 +637,38 @@ namespace Esam.Services
             Engine.Start();
         }
 
-        /// <summary>제어 루프와 폴링을 중지한다.</summary>
+        /// <summary>
+        /// 액추에이터를 안전 위치로 보낸 뒤 제어 루프와 폴링을 중지한다.
+        /// </summary>
+        /// <param name="parkTimeoutMs">파킹 확인 대기 시간 [ms]. 0 이면 기다리지 않는다.</param>
         /// <remarks>
-        /// 상태머신도 Idle 로 되돌린다. 그렇지 않으면 단계가 AutoControl 로 남아,
-        /// 다시 <see cref="Start"/> 를 호출해도 Start 트리거가 무시되고
-        /// <b>초기화와 원점 복귀를 건너뛴 채 자동 운전 상태에서 재개</b>된다.
+        /// <para><b>순서가 중요하다.</b> 폴링을 먼저 멈추면 파킹 지령이 큐에만 남고
+        /// 전송되지 않는다. 밸브는 열린 채, 팬은 도는 채로 프로그램이 사라지고,
+        /// 인터록 평가도 함께 끝나 아무도 보지 않는 상태가 된다.</para>
+        /// <list type="number">
+        ///   <item><description>제어 엔진 정지 — 새 자동 지령을 막는다</description></item>
+        ///   <item><description>전 체인 밸브 Close + 팬 OFF 를 인터록 우선순위로 투입</description></item>
+        ///   <item><description>실행 확인까지 대기(최대 <paramref name="parkTimeoutMs"/>)</description></item>
+        ///   <item><description>상태머신 Idle 복귀 → 워커 정지</description></item>
+        /// </list>
+        /// <para>정전이나 강제 종료에서는 이 경로가 실행되지 않는다. 정상 종료만 덮는 한계가 있으나,
+        /// 대부분의 종료가 정상 종료이므로 값어치가 있다.</para>
+        /// <para>상태머신을 Idle 로 되돌리는 이유는 별개다. 단계가 AutoControl 로 남으면
+        /// 재시작 시 Start 트리거가 무시되어 <b>초기화와 원점 복귀를 건너뛴 채</b>
+        /// 자동 운전 상태에서 재개된다.</para>
         /// </remarks>
-        public void Stop()
+        public void Stop(int parkTimeoutMs = 5000)
         {
             if (Engine != null)
             {
                 Engine.Stop();
+                Engine.ParkActuators("프로그램 종료: 액추에이터 안전 위치 이동");
+            }
+
+            WaitForPark(parkTimeoutMs);
+
+            if (Engine != null)
+            {
                 Engine.StateMachine.Fire(SystemTrigger.Stop);
             }
 
@@ -483,6 +676,80 @@ namespace Esam.Services
             {
                 worker.Stop();
             }
+        }
+
+        /// <summary>파킹 지령이 실행될 때까지 기다린다.</summary>
+        /// <param name="timeoutMs">최대 대기 시간 [ms].</param>
+        /// <remarks>
+        /// 워커가 돌고 있지 않으면(테스트나 수동 사이클 실행) 기다릴 이유가 없다.
+        /// 그 경우 지령은 큐에 남고, 호출측이 사이클을 돌려 처리한다.
+        /// </remarks>
+        private void WaitForPark(int timeoutMs)
+        {
+            if (timeoutMs <= 0)
+            {
+                return;
+            }
+
+            bool anyRunning = false;
+
+            foreach (ModbusPortWorker worker in _workers)
+            {
+                if (worker.IsRunning)
+                {
+                    anyRunning = true;
+                    break;
+                }
+            }
+
+            if (!anyRunning)
+            {
+                return;
+            }
+
+            System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
+
+            while (watch.ElapsedMilliseconds < timeoutMs)
+            {
+                if (IsParked())
+                {
+                    return;
+                }
+
+                System.Threading.Thread.Sleep(50);
+            }
+
+            _warnings.Add(ConfigWarning.Advisory(
+                "STOP-01",
+                "종료 시 액추에이터 파킹을 확인하지 못했습니다. 밸브·팬 위치를 직접 확인하십시오.",
+                null));
+        }
+
+        /// <summary>모든 액추에이터가 안전 위치에 있는지 판정한다.</summary>
+        /// <returns>밸브가 닫히고 팬이 멈췄으면 true.</returns>
+        private bool IsParked()
+        {
+            SystemSnapshot snapshot = Store.Current;
+
+            foreach (ChainDefinition chain in Control.Chains)
+            {
+                ValveState valve = snapshot.FindValve(chain.ValveId);
+
+                if (valve != null && valve.Quality == Quality.Good
+                    && valve.PositionPulse > Control.Valve.PositionTolerancePulse)
+                {
+                    return false;
+                }
+
+                FanState fan = snapshot.FindFan(chain.FanId);
+
+                if (fan != null && fan.Quality == Quality.Good && fan.IsRunning)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -528,10 +795,15 @@ namespace Esam.Services
                     worker.Statistics.LastCycleMs, worker.Statistics.SuccessRatePercent));
             }
 
-            if (_warnings.Count > 0)
+            // 건수만 찍으면 로그를 봐도 원인을 알 수 없다. 본문을 낸다.
+            foreach (ConfigWarning warning in _warnings)
             {
-                builder.AppendLine(string.Format(
-                    CultureInfo.InvariantCulture, "  경고 {0}건", _warnings.Count));
+                builder.AppendLine("  " + warning);
+            }
+
+            if (HasBlockingWarnings && !_warningsAcknowledged)
+            {
+                builder.AppendLine("  ※ 차단 경고가 확인되지 않아 자동 운전에 진입할 수 없습니다.");
             }
 
             return builder.ToString();
