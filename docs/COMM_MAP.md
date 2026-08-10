@@ -154,7 +154,12 @@ Slow 가 겹치는 사이클의 최악값                              = 362 ms
 
 `0x0064`~`0x0072` 15워드를 1트랜잭션으로 읽는 편이 5+5 두 번보다 빠릅니다.
 
-**압력센서 (Autonics PSM, ID 26)** — 신규 장치. **1대에 5채널**이며 Input Register 이므로 **FC04** 를 씁니다.
+**압력센서 (Autonics PSM, ID 26)** — **Blower Pressure Sensor**. 1대에 5채널이며 Input Register 이므로 **FC04** 를 씁니다.
+
+> **위치는 Bottom 으로 확정했습니다 (2026-08-10).** `ESAM_IO List_260806.xlsx` 의 `SVID` 시트가
+> 24~28번을 "Exhaust ... **Front** PT Sensor" 로 적었으나, 설계상 PSM 은 블로워 압력을 보는
+> **Bottom** 계측입니다. IO 시트 표기(EEXCB/LB/RB/SLB/SRB)가 맞고 **SVID 시트가 오류**입니다.
+> → SVID 시트 명칭 수정 요청 필요.
 
 | 채널 | PV 주소 | 위치 |
 |---|---|---|
