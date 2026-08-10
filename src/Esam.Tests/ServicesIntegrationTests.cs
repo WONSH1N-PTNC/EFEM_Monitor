@@ -679,6 +679,71 @@ namespace Esam.Tests
         }
 
         [Fact]
+        public void 경고_목록을_열거하는_중에_추가해도_예외가_없다()
+        {
+            // ★ Warnings 가 내부 리스트를 그대로 반환하면
+            // 워커 스레드가 경고를 추가하는 순간 열거 중인 화면에서
+            // InvalidOperationException 이 터진다.
+            //
+            // 그 예외가 발생하는 곳이 "경고를 보여주려던 화면" 이라는 점이 특히 나쁘다.
+            // 안전 기능이 동작하지 않는다는 사실을 알리려는 순간에 화면이 죽는다.
+            EsamRuntime runtime = CreateRuntime();
+
+            Assert.NotEmpty(runtime.Warnings);
+
+            // 연속 실패 카운터를 임계까지 올려 둔다. 이렇게 하지 않으면
+            // 아래 루프의 호출이 FaultDetected 를 발생시키지 못해
+            // 경고가 추가되지 않고, 테스트가 아무것도 검증하지 못한 채 통과한다.
+            int threshold = runtime.Diagnostics.EvaluationFailureThreshold;
+
+            for (int i = 0; i < threshold; i++)
+            {
+                runtime.Diagnostics.RecordEvaluationFailure(
+                    new InvalidOperationException("사전 주입"), _clock.UtcNow);
+            }
+
+            int before = runtime.Warnings.Count;
+
+            // 열거 도중에 경고를 추가한다. 실제로는 워커 스레드가 하는 일이지만,
+            // 같은 스레드에서 해도 내부 리스트를 직접 반환한다면 동일하게 터진다.
+            // 스레드를 띄우면 타이밍에 따라 통과해 버리는 불안정한 테스트가 된다.
+            int seen = 0;
+
+            foreach (ConfigWarning warning in runtime.Warnings)
+            {
+                Assert.NotNull(warning);
+                seen++;
+
+                runtime.Diagnostics.RecordEvaluationFailure(
+                    new InvalidOperationException("열거 중 주입"), _clock.UtcNow);
+            }
+
+            Assert.True(seen > 0);
+
+            // 루프 안의 호출이 실제로 경고를 추가했는지 확인한다.
+            // 추가되지 않았다면 위 열거는 경합을 재현하지 못한 것이다.
+            Assert.True(
+                runtime.Warnings.Count > before,
+                "열거 중 경고가 추가되지 않아 경합을 재현하지 못했습니다.");
+        }
+
+        [Fact]
+        public void 경고_목록_사본을_수정해도_런타임에_반영되지_않는다()
+        {
+            // 사본을 주는 결정의 이면이다. 외부가 목록을 바꿔 안전 경고를
+            // 지워버릴 수 없어야 한다.
+            EsamRuntime runtime = CreateRuntime();
+
+            int before = runtime.Warnings.Count;
+
+            runtime.Warnings.Clear();
+            runtime.Warnings.Add(ConfigWarning.Advisory("FAKE", "위조 경고", null));
+
+            Assert.Equal(before, runtime.Warnings.Count);
+            Assert.DoesNotContain(runtime.Warnings, w => w.Code == "FAKE");
+        }
+
+        [Fact]
         public void Describe는_경고_본문을_출력한다()
         {
             // 건수만 찍으면 로그를 봐도 원인을 알 수 없다.

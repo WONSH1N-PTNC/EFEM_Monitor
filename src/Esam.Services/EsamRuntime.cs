@@ -128,6 +128,17 @@ namespace Esam.Services
         private readonly List<ModbusPortWorker> _workers = new List<ModbusPortWorker>();
         private readonly List<ConfigWarning> _warnings = new List<ConfigWarning>();
 
+        /// <summary>
+        /// 구성 경고 목록과 확인 플래그를 보호하는 락.
+        /// </summary>
+        /// <remarks>
+        /// 경고는 조립 시점에만 생기는 것이 아니다. 안전 판정 실패·인터록 지령 실패가
+        /// <b>포트 워커 스레드에서</b> 경고를 추가한다. 반대로 화면과 제어 엔진은
+        /// 자기 스레드에서 목록을 읽는다. 보호하지 않으면 열거 중 추가로
+        /// <c>InvalidOperationException</c> 이 발생한다.
+        /// </remarks>
+        private readonly object _warningGate = new object();
+
         /// <summary>차단 경고가 확인(Acknowledge)되었는지 여부.</summary>
         private bool _warningsAcknowledged;
 
@@ -185,10 +196,25 @@ namespace Esam.Services
             get { return _workers; }
         }
 
-        /// <summary>구성 경고 목록.</summary>
+        /// <summary>구성 경고 목록의 사본.</summary>
+        /// <remarks>
+        /// <para><b>사본을 반환한다.</b> 조립 시점에만 채워지는 목록이 아니기 때문이다.
+        /// <see cref="OnRuntimeFault"/> 가 <b>포트 워커 스레드에서</b> 경고를 추가하므로,
+        /// 내부 리스트를 그대로 넘기면 화면이 열거하는 중에 항목이 추가되어
+        /// <c>InvalidOperationException</c> 이 발생한다.</para>
+        /// <para>그 예외가 터지는 곳이 <b>경고를 보여주려던 화면</b>이라는 점이 특히 나쁘다.
+        /// 안전 기능이 동작하지 않는다는 사실을 알리려는 순간에 화면이 죽는다.</para>
+        /// <para>사본이므로 여기에 항목을 추가해도 런타임에 반영되지 않는다.</para>
+        /// </remarks>
         public IList<ConfigWarning> Warnings
         {
-            get { return _warnings; }
+            get
+            {
+                lock (_warningGate)
+                {
+                    return new List<ConfigWarning>(_warnings);
+                }
+            }
         }
 
         /// <summary>안전 기능이 동작하지 않는 경고가 하나라도 있는지 여부.</summary>
@@ -196,22 +222,25 @@ namespace Esam.Services
         {
             get
             {
-                foreach (ConfigWarning warning in _warnings)
+                lock (_warningGate)
                 {
-                    if (warning.IsBlocking)
+                    foreach (ConfigWarning warning in _warnings)
                     {
-                        return true;
+                        if (warning.IsBlocking)
+                        {
+                            return true;
+                        }
                     }
-                }
 
-                return false;
+                    return false;
+                }
             }
         }
 
         /// <summary>차단 경고가 확인되었는지 여부.</summary>
         public bool WarningsAcknowledged
         {
-            get { return _warningsAcknowledged; }
+            get { lock (_warningGate) { return _warningsAcknowledged; } }
         }
 
         /// <summary>
@@ -226,7 +255,29 @@ namespace Esam.Services
         /// </remarks>
         public void AcknowledgeWarnings()
         {
-            _warningsAcknowledged = true;
+            lock (_warningGate)
+            {
+                _warningsAcknowledged = true;
+            }
+        }
+
+        /// <summary>구성 경고를 추가한다. 어느 스레드에서든 호출할 수 있다.</summary>
+        /// <param name="warning">추가할 경고. null 이면 무시한다.</param>
+        /// <remarks>
+        /// 경고는 조립 시점에만 생기는 것이 아니다. <see cref="OnRuntimeFault"/> 가
+        /// 포트 워커 스레드에서 추가하므로 모든 추가를 이 지점으로 모은다.
+        /// </remarks>
+        private void AddWarning(ConfigWarning warning)
+        {
+            if (warning == null)
+            {
+                return;
+            }
+
+            lock (_warningGate)
+            {
+                _warnings.Add(warning);
+            }
         }
 
         /// <summary>
@@ -235,14 +286,15 @@ namespace Esam.Services
         /// <returns>진입 가능하면 null, 불가하면 거부 사유.</returns>
         private string CheckAutoEntry()
         {
-            if (!HasBlockingWarnings || _warningsAcknowledged)
+            if (!HasBlockingWarnings || WarningsAcknowledged)
             {
                 return null;
             }
 
             List<string> blocking = new List<string>();
 
-            foreach (ConfigWarning warning in _warnings)
+            // Warnings 는 사본을 준다. 워커 스레드가 경고를 추가하는 중일 수 있다.
+            foreach (ConfigWarning warning in Warnings)
             {
                 if (warning.IsBlocking)
                 {
@@ -307,7 +359,7 @@ namespace Esam.Services
             runtime._clock = resolvedClock;
             foreach (string mapWarning in mapWarnings)
             {
-                runtime._warnings.Add(ConfigWarning.Advisory("CFG-MAP", mapWarning, null));
+                runtime.AddWarning(ConfigWarning.Advisory("CFG-MAP", mapWarning, null));
             }
 
             // ── 안전 입력 유무 판정 ──────────────────────────────────────────────
@@ -318,23 +370,32 @@ namespace Esam.Services
 
             if (!control.SafetyInputsConfigured)
             {
-                runtime._warnings.Add(ConfigWarning.Blocking(
+                runtime.AddWarning(ConfigWarning.Blocking(
                     "SAFE-01",
                     "안전 입력 PLC 가 구성에 없습니다. EMO·메인 차단기·도어 인터록"
                     + "(IL-02·IL-03·IL-04·IL-05)이 동작하지 않습니다.",
                     "device-map.json 에 driver=Plc 디바이스를 추가하고 배선을 확인하십시오."));
             }
 
+            // 설정 로더들이 낸 경고는 일단 지역 목록에 모아 두고 한 번에 넘긴다.
+            // 경고 목록 접근을 AddWarning 한 곳으로 모으기 위한 것이다.
+            List<ConfigWarning> configWarnings = new List<ConfigWarning>();
+
             // ── 운전 파라미터 (ECID 마스터) ──────────────────────────────────────
             // device-map 과 대조해 검증한다. 참조가 끊어지면 그 체인이 제어되지 않는다.
-            control.Recipe = ResolveRecipe(opts, map, runtime._warnings);
+            control.Recipe = ResolveRecipe(opts, map, configWarnings);
 
             // ── 2. 데이터 저장소 ─────────────────────────────────────────────────
             SnapshotBuilder builder = new SnapshotBuilder(map);
             runtime.Store = new DataStore(builder, resolvedClock);
 
             // ── 3. 알람 / 인터록 ─────────────────────────────────────────────────
-            IEnumerable<AlarmRule> alarmRules = ResolveAlarmRules(opts, runtime._warnings);
+            IEnumerable<AlarmRule> alarmRules = ResolveAlarmRules(opts, configWarnings);
+
+            foreach (ConfigWarning configWarning in configWarnings)
+            {
+                runtime.AddWarning(configWarning);
+            }
 
             if (alarmRules != null)
             {
@@ -352,7 +413,7 @@ namespace Esam.Services
             foreach (string text in interlockWarnings)
             {
                 // 인터록이 비활성이거나 임계값이 미지정이면 안전 기능이 성립하지 않는다.
-                runtime._warnings.Add(ConfigWarning.Blocking(
+                runtime.AddWarning(ConfigWarning.Blocking(
                     "SAFE-02", text, "interlocks 설정과 HW 배선을 확인하십시오."));
             }
 
@@ -576,7 +637,7 @@ namespace Esam.Services
 
                     foreach (string skipped in deviceRuntime.SkippedGroups)
                     {
-                        _warnings.Add(ConfigWarning.Advisory(
+                        AddWarning(ConfigWarning.Advisory(
                             "CFG-ADDR",
                             string.Format(
                                 CultureInfo.InvariantCulture,
@@ -652,7 +713,7 @@ namespace Esam.Services
                         // 시뮬레이션 슬레이브가 없는 장치(PLC·온습도·풍속)는 등록하지 않는다.
                         // 워커는 무응답을 타임아웃으로 처리하고, 스냅샷은 해당 값을 NoData 로 둔다.
                         // 이는 실제로 그 장치들의 레지스터 명세가 미확보인 현재 상태와 동일하다.
-                        _warnings.Add(ConfigWarning.Advisory(
+                        AddWarning(ConfigWarning.Advisory(
                             "SIM-01",
                             string.Format(
                                 CultureInfo.InvariantCulture,
@@ -831,7 +892,7 @@ namespace Esam.Services
 
             try
             {
-                _warnings.Add(ConfigWarning.Blocking(
+                AddWarning(ConfigWarning.Blocking(
                     "RUN-" + ((int)e.Kind).ToString(CultureInfo.InvariantCulture),
                     e.Detail,
                     "원인을 확인한 뒤 재기동하십시오."));
@@ -1044,7 +1105,7 @@ namespace Esam.Services
                 System.Threading.Thread.Sleep(50);
             }
 
-            _warnings.Add(ConfigWarning.Advisory(
+            AddWarning(ConfigWarning.Advisory(
                 "STOP-01",
                 "종료 시 액추에이터 파킹을 확인하지 못했습니다. 밸브·팬 위치를 직접 확인하십시오.",
                 null));
@@ -1121,12 +1182,12 @@ namespace Esam.Services
             }
 
             // 건수만 찍으면 로그를 봐도 원인을 알 수 없다. 본문을 낸다.
-            foreach (ConfigWarning warning in _warnings)
+            foreach (ConfigWarning warning in Warnings)
             {
                 builder.AppendLine("  " + warning);
             }
 
-            if (HasBlockingWarnings && !_warningsAcknowledged)
+            if (HasBlockingWarnings && !WarningsAcknowledged)
             {
                 builder.AppendLine("  ※ 차단 경고가 확인되지 않아 자동 운전에 진입할 수 없습니다.");
             }
