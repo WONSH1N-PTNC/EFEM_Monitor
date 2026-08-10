@@ -750,8 +750,6 @@ namespace Esam.Services
 
         /// <summary>
         /// 인터록 지령이 실제로 효력을 냈는지 확인한다.
-        /// </summary>        /// <summary>
-        /// 인터록 지령이 실제로 효력을 냈는지 확인한다.
         /// </summary>
         /// <param name="evaluation">이번 사이클 판정 결과.</param>
         /// <param name="snapshot">현재 스냅샷.</param>
@@ -847,7 +845,7 @@ namespace Esam.Services
             }
         }
 
-        /// <summary>포트 워커의 지령 실패를 처리한다.</summary>        /// <summary>포트 워커의 지령 실패를 처리한다.</summary>
+        /// <summary>포트 워커의 지령 실패를 처리한다.</summary>
         /// <param name="sender">이벤트 발신자.</param>
         /// <param name="e">실패 정보.</param>
         /// <remarks>

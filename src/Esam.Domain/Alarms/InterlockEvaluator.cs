@@ -376,6 +376,7 @@ namespace Esam.Domain.Alarms
         /// <param name="nowUtc">현재 시각(UTC).</param>
         /// <param name="trips">발동 목록(출력).</param>
         /// <param name="commands">지령 목록(출력).</param>
+        /// <param name="unjudgeable">측정값을 신뢰할 수 없어 판정하지 못한 체인 번호 목록(출력).</param>
         /// <returns>규칙 Scope 가 System 이고 한 체인이라도 발동했으면 true.</returns>
         private bool EvaluateSensor3HighLimit(
             SystemSnapshot snapshot,

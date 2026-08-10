@@ -797,8 +797,9 @@ namespace Esam.Tests
             AdvanceToReady(runtime);
 
             // 판정 경로 자체를 깨뜨린다. 이벤트 구독자 예외는 삼켜지므로 소용이 없다.
-            // 활성 센서 모드의 설정을 제거하면 BuildStatus() → ResolveMode() 가
+            // 활성 센서 모드의 설정을 제거하면 BuildStatus() → GetSetting() → GetMode() 가
             // InvalidOperationException 을 던진다. OnPollCompleted 의 첫 단계다.
+            // 레시피가 있어도 이탈 확정 시간(Time)은 모드별 공통값에서 오므로 경로가 유지된다.
             runtime.Control.Modes.Remove(runtime.Control.ActiveMode);
 
             int threshold = runtime.Diagnostics.EvaluationFailureThreshold;
