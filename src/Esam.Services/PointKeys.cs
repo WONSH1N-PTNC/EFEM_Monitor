@@ -1,3 +1,5 @@
+using Esam.Communication.Configuration;
+
 namespace Esam.Services
 {
     /// <summary>
@@ -11,34 +13,38 @@ namespace Esam.Services
     /// </remarks>
     public static class PointKeys
     {
-        // ── 드라이버 이름 (device-map.json 의 deviceTypes[*].driver) ──────────────
+        // ── 드라이버 이름 ────────────────────────────────────────────────────────
+        //
+        // 실체는 Esam.Communication.Configuration.DriverNames 에 있다.
+        // 설정 파일을 읽는 계층이 Communication 이므로 계약도 그쪽에 두는 것이 맞다.
+        // 여기서는 기존 사용처가 깨지지 않도록 그대로 노출한다.
 
-        /// <summary>차압센서. <see cref="PressurePa"/> 를 제공한다.</summary>
-        public const string DriverPressureSensor = "PressureSensor";
+        /// <summary>차압센서·압력센서. <see cref="PressurePa"/> 를 제공한다.</summary>
+        public const string DriverPressureSensor = DriverNames.PressureSensor;
 
         /// <summary>스로틀밸브.</summary>
-        public const string DriverThrottleValve = "ThrottleValve";
+        public const string DriverThrottleValve = DriverNames.ThrottleValve;
 
         /// <summary>송풍팬(Modbus 직결).</summary>
-        public const string DriverModbusFan = "ModbusFan";
+        public const string DriverModbusFan = DriverNames.ModbusFan;
 
         /// <summary>PLC 디지털 입력 및 온도.</summary>
-        public const string DriverPlc = "Plc";
+        public const string DriverPlc = DriverNames.Plc;
 
         /// <summary>온습도 센서.</summary>
-        public const string DriverTempHumidity = "TempHumidity";
+        public const string DriverTempHumidity = DriverNames.TempHumidity;
 
         /// <summary>풍속 센서.</summary>
-        public const string DriverAirVelocity = "AirVelocity";
+        public const string DriverAirVelocity = DriverNames.AirVelocity;
 
         /// <summary>파티클 센서.</summary>
-        public const string DriverParticle = "Particle";
+        public const string DriverParticle = DriverNames.Particle;
 
         /// <summary>MFC.</summary>
-        public const string DriverMfc = "Mfc";
+        public const string DriverMfc = DriverNames.Mfc;
 
         /// <summary>FFU.</summary>
-        public const string DriverFfu = "Ffu";
+        public const string DriverFfu = DriverNames.Ffu;
 
         // ── 차압센서 ────────────────────────────────────────────────────────────
 
@@ -82,17 +88,19 @@ namespace Esam.Services
 
         // ── PLC 디지털 입력 ─────────────────────────────────────────────────────
         //
-        // IO List_260801.xlsx 기준. Modbus 로는 슬레이브 25 의 0x000A 한 워드에
-        // 8점이 비트마스크로 들어온다. PLC DATA 표기 D10.n 은 비트 (n-1) 이다.
+        // ESAM_IO List_260806.xlsx 기준. Modbus 로는 슬레이브 25 의 0x000A 한 워드에
+        // 8점이 비트마스크로 들어온다. PLC DATA 표기 D10.n 이 곧 비트 n 이다.
         //
-        //   bit0 D10.1  EMO1 비상정지
-        //   bit1 D10.2  EC BLDC 냉각팬 정지
-        //   bit2 D10.3  EL BLDC 냉각팬 정지
-        //   bit3 D10.4  ER BLDC 냉각팬 정지
-        //   bit4 D10.5  SL BLDC 냉각팬 정지
-        //   bit5 D10.6  SR BLDC 냉각팬 정지
-        //   bit6 D10.7  컨트롤박스 팬 T 정지
-        //   bit7 D10.8  컨트롤박스 팬 B 정지
+        //   bit0 D10.0  마스크   1   EMO1 비상정지
+        //   bit1 D10.1  마스크   2   EC BLDC 냉각팬 정지
+        //   bit2 D10.2  마스크   4   EL BLDC 냉각팬 정지
+        //   bit3 D10.3  마스크   8   ER BLDC 냉각팬 정지
+        //   bit4 D10.4  마스크  16   SL BLDC 냉각팬 정지
+        //   bit5 D10.5  마스크  32   SR BLDC 냉각팬 정지
+        //   bit6 D10.6  마스크  64   컨트롤박스 팬 T 정지
+        //   bit7 D10.7  마스크 128   컨트롤박스 팬 B 정지
+        //
+        // 260801 판은 D10.1~8 로 적었으나 마스크 값은 같았다. 비트 인덱스는 변하지 않았다.
 
         /// <summary>송풍팬 정지 알람 접두. 뒤에 0~4 가 붙는다(bit1 ~ bit5).</summary>
         public const string DiFanStopPrefix = "di.fanStop";
@@ -110,7 +118,7 @@ namespace Esam.Services
         /// 도어 열림. <b>배선된 입력이 없다.</b>
         /// </summary>
         /// <remarks>
-        /// IO List_260801.xlsx 의 DI 8점에 도어 접점이 없다. 인터록 IL-05 는
+        /// ESAM_IO List_260806.xlsx 의 DI 8점에 도어 접점이 없다. 인터록 IL-05 는
         /// 신호원이 없어 비활성 상태로 유지된다(DESIGN.md Open Issue #7).
         /// 키는 배선 추가 시 즉시 쓸 수 있도록 남겨 둔다.
         /// </remarks>

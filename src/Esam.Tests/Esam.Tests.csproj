@@ -33,6 +33,9 @@
     <None Include="..\..\config\device-map.json" Link="config\device-map.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="..\..\config\recipe.json" Link="config\recipe.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
