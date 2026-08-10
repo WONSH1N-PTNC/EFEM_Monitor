@@ -304,7 +304,7 @@ namespace Esam.Tests
                 }
             }
 
-            Assert.True(false,
+            Assert.Fail(
                 "기동 시퀀스가 Ready 에 도달하지 못했습니다. 현재 단계: "
                 + runtime.Engine.StateMachine.Phase);
         }
@@ -740,6 +740,152 @@ namespace Esam.Tests
             Assert.True(
                 runtime.Alarms.RuleCount >= 31,
                 "알람 규칙이 31종에 미치지 못합니다: " + runtime.Alarms.RuleCount);
+        }
+
+        // ── S5: 안전 경로 실패 감지 (D6, D11) ──────────────────────────────────
+
+        [Fact]
+        public void 판정_예외가_연속되면_SafeStop으로_보낸다()
+        {
+            // ★ D11. 종전에는 폴링 완료 처리의 예외가 포트 워커의 catch-all 로 흘러가
+            // 흔적 없이 사라졌다. 워커는 살아남지만 인터록 평가는 그 사이클부터 수행되지 않고,
+            // 예외가 결정적이면 인터록이 영구히 꺼진 채 운전이 계속된다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+
+            // 판정 경로 자체를 깨뜨린다. 이벤트 구독자 예외는 삼켜지므로 소용이 없다.
+            // 활성 센서 모드의 설정을 제거하면 BuildStatus() → ResolveMode() 가
+            // InvalidOperationException 을 던진다. OnPollCompleted 의 첫 단계다.
+            runtime.Control.Modes.Remove(runtime.Control.ActiveMode);
+
+            int threshold = runtime.Diagnostics.EvaluationFailureThreshold;
+
+            for (int i = 0; i < threshold + 2; i++)
+            {
+                PollAll(runtime);
+            }
+
+            Assert.True(
+                runtime.Diagnostics.TotalEvaluationFailures >= threshold,
+                "판정 예외가 집계되지 않았습니다: " + runtime.Diagnostics.TotalEvaluationFailures);
+
+            Assert.Equal(SystemPhase.SafeStop, runtime.Engine.StateMachine.Phase);
+            Assert.Contains(runtime.Warnings, w => w.Code.StartsWith("RUN-", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void 판정이_정상이면_예외_카운터가_초기화된다()
+        {
+            EsamRuntime runtime = CreateRuntime();
+
+            PollAll(runtime);
+            PollAll(runtime);
+
+            Assert.Equal(0, runtime.Diagnostics.ConsecutiveEvaluationFailures);
+            Assert.Equal(0L, runtime.Diagnostics.TotalEvaluationFailures);
+        }
+
+        [Fact]
+        public void 인터록_지령이_담당_워커에서_실패하면_센다()
+        {
+            // ★ D6. CommandFailed 구독자가 하나도 없어, 안전 지령이 장치에 닿지 못해도
+            // 아무도 알지 못했다. CloseValve 는 위치 설정 → PR0 이동 2단 시퀀스라
+            // 두 번째가 타임아웃하면 밸브가 전혀 움직이지 않는다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 100);
+
+            // 밸브를 분리해 인터록 지령이 실패하게 만든다.
+            SimulatedModbusTransport bus = Transport(runtime, "CH2");
+
+            for (byte slave = 1; slave <= 5; slave++)
+            {
+                Assert.True(bus.DetachSlave(slave));
+            }
+
+            LoseExhaust(runtime);
+
+            for (int i = 0; i < 10; i++)
+            {
+                PollAll(runtime);
+                _clock.AdvanceMs(200);
+            }
+
+            Assert.True(runtime.Interlock.IsTripped);
+            Assert.True(
+                runtime.Diagnostics.TotalInterlockCommandFailures > 0,
+                "인터록 지령 실패가 집계되지 않았습니다.");
+        }
+
+        [Fact]
+        public void 담당하지_않는_포트의_실패는_세지_않는다()
+        {
+            // 인터록 지령은 전 워커에 뿌리므로 담당하지 않는 워커에서는 반드시 실패한다.
+            // 그것을 세면 정상 동작이 장애로 집계된다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 100);
+
+            LoseExhaust(runtime);
+            RunLoop(runtime, 10);
+
+            Assert.True(runtime.Interlock.IsTripped);
+
+            // 밸브·팬은 정상이므로 담당 워커는 성공한다.
+            // CH1 워커는 이 디바이스들을 담당하지 않아 실패하지만 집계 대상이 아니다.
+            Assert.Equal(0L, runtime.Diagnostics.TotalInterlockCommandFailures);
+        }
+
+        [Fact]
+        public void 인터록_후_밸브가_열린_채로_남으면_실효_실패를_보고한다()
+        {
+            // Tripped 는 "지령을 큐에 넣었다" 는 뜻이지 "밸브가 닫혔다" 는 뜻이 아니다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 100);
+
+            int pulse;
+            int target;
+            bool home;
+            runtime.Plant.TryGetValve("V-1", out pulse, out target, out home);
+            Assert.True(pulse > 0, "밸브가 열려 있는 상태여야 한다.");
+
+            bool reported = false;
+            runtime.Diagnostics.FaultDetected += (sender, e) =>
+            {
+                if (e.Kind == RuntimeFaultKind.InterlockNotEffective)
+                {
+                    reported = true;
+                }
+            };
+
+            // 인터록을 발동시키되 밸브는 움직이지 않게 한다.
+            // 플랜트를 진행시키지 않으면 지령이 실행되어도 위치가 그대로다.
+            LoseExhaust(runtime);
+            runtime.Plant.Advance(2.0);
+
+            SimulatedModbusTransport bus = Transport(runtime, "CH2");
+
+            for (byte slave = 1; slave <= 5; slave++)
+            {
+                bus.DetachSlave(slave);
+            }
+
+            for (int i = 0; i < 20; i++)
+            {
+                PollAll(runtime);
+                _clock.AdvanceMs(2000);
+            }
+
+            Assert.True(runtime.Interlock.IsTripped);
+            Assert.True(reported || runtime.Diagnostics.TotalInterlockCommandFailures > 0,
+                "인터록이 효력을 내지 못한 사실이 보고되지 않았습니다.");
         }
 
         // ── S5: 기동 시퀀스 (D3) ────────────────────────────────────────────────

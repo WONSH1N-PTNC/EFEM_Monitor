@@ -114,6 +114,21 @@ namespace Esam.Services
         /// <summary>차단 경고가 확인(Acknowledge)되었는지 여부.</summary>
         private bool _warningsAcknowledged;
 
+        /// <summary>안전 경로 실패 카운터.</summary>
+        private readonly RuntimeDiagnostics _diagnostics = new RuntimeDiagnostics();
+
+        /// <summary>인터록이 발동한 시각. 실효 확인 기준점이다.</summary>
+        private DateTime _interlockTrippedSinceUtc = DateTime.MinValue;
+
+        /// <summary>인터록 실효 실패를 이미 보고했는지 여부. 매 사이클 반복 보고를 막는다.</summary>
+        private bool _interlockEffectReported;
+
+        /// <summary>시각 제공자.</summary>
+        private IClock _clock = SystemClock.Instance;
+
+        /// <summary>진단 장애 처리 중 재진입을 막는다.</summary>
+        private bool _handlingFault;
+
         private bool _disposed;
 
         private EsamRuntime()
@@ -137,6 +152,12 @@ namespace Esam.Services
 
         /// <summary>알람 서비스. 규칙이 없으면 null.</summary>
         public AlarmService Alarms { get; private set; }
+
+        /// <summary>안전 경로 실패 진단. 판정 예외와 인터록 지령 실패를 센다.</summary>
+        public RuntimeDiagnostics Diagnostics
+        {
+            get { return _diagnostics; }
+        }
 
         /// <summary>가상 플랜트. 시뮬레이션 모드에서만 유효하다.</summary>
         public Esam.Communication.Simulation.PlantModel Plant { get; private set; }
@@ -266,6 +287,7 @@ namespace Esam.Services
             EsamRuntime runtime = new EsamRuntime();
             runtime.Map = map;
             runtime.Control = control;
+            runtime._clock = resolvedClock;
             foreach (string mapWarning in mapWarnings)
             {
                 runtime._warnings.Add(ConfigWarning.Advisory("CFG-MAP", mapWarning, null));
@@ -322,6 +344,9 @@ namespace Esam.Services
             // 안전 기능이 빠진 구성으로는 자동 운전에 들어갈 수 없게 막는다.
             // 화면이 없는 단계에서도 효력이 생기도록 진입 지점에 건다.
             runtime.Engine.AutoEntryGuard = runtime.CheckAutoEntry;
+
+            // 안전 판정이 수행되지 못하거나 안전 지령이 닿지 않으면 SafeStop 으로 보낸다.
+            runtime._diagnostics.FaultDetected += runtime.OnRuntimeFault;
 
             // 상태머신 반영은 이벤트가 아니라 폴링마다 상태를 대조해 수행한다(ReconcileInterlock).
             // 이벤트 구독은 이력·화면용으로만 남긴다.
@@ -487,6 +512,11 @@ namespace Esam.Services
                 // 폴링 완료 → 스냅샷 조립 → 인터록 즉시 판정.
                 // 세 단계가 같은(워커) 스레드에서 연달아 일어나므로 지연이 최소다.
                 worker.PollCompleted += OnPollCompleted;
+
+                // 종전에는 구독자가 하나도 없어, 안전 지령이 장치에 닿지 못해도
+                // 아무도 알지 못했다. CloseValve 는 2단 시퀀스라 두 번째가 타임아웃하면
+                // 밸브가 전혀 움직이지 않는데, Tripped 는 이미 처리됐다고 알린 뒤다.
+                worker.CommandFailed += OnCommandFailed;
             }
         }
 
@@ -547,20 +577,176 @@ namespace Esam.Services
         /// </summary>
         private void OnPollCompleted(object sender, PollCompletedEventArgs e)
         {
-            SystemSnapshot snapshot = Store.Apply(
-                e,
-                Engine.BuildStatus(),
-                Alarms == null ? null : Alarms.Summary);
-
-            // 인터록을 여기서 즉시 판정한다. 제어 타이머를 기다리면 수백 ms 늦는다.
-            InterlockEvaluation evaluation = Interlock.Evaluate(snapshot);
-
-            ReconcileInterlock(evaluation);
-
-            if (Alarms != null)
+            try
             {
-                Alarms.Evaluate(snapshot);
+                SystemSnapshot snapshot = Store.Apply(
+                    e,
+                    Engine.BuildStatus(),
+                    Alarms == null ? null : Alarms.Summary);
+
+                // 인터록을 여기서 즉시 판정한다. 제어 타이머를 기다리면 수백 ms 늦는다.
+                InterlockEvaluation evaluation = Interlock.Evaluate(snapshot);
+
+                ReconcileInterlock(evaluation);
+                VerifyInterlockEffect(evaluation, snapshot);
+
+                if (Alarms != null)
+                {
+                    Alarms.Evaluate(snapshot);
+                }
+
+                _diagnostics.RecordEvaluationSuccess();
             }
+            catch (Exception ex)
+            {
+                // 여기서 잡지 않으면 포트 워커의 catch-all 로 흘러가 흔적 없이 사라진다.
+                // 워커는 살아남지만 이번 사이클의 인터록·알람 평가는 수행되지 않았고,
+                // 예외가 결정적이면 그 상태가 영구히 이어진다.
+                //
+                // 예외를 다시 던지지 않는 이유는 폴링 스레드를 죽이면 통신 전체가 멎기 때문이다.
+                // 대신 세고, 연속되면 SafeStop 으로 보낸다. 안전 판정이 수행되지 않는 상태를
+                // 조용히 넘기는 것보다 장비를 세우는 편이 낫다.
+                _diagnostics.RecordEvaluationFailure(ex, _clock.UtcNow);
+            }
+        }
+
+        /// <summary>
+        /// 인터록 지령이 실제로 효력을 냈는지 확인한다.
+        /// </summary>
+        /// <param name="evaluation">이번 사이클 판정 결과.</param>
+        /// <param name="snapshot">현재 스냅샷.</param>
+        /// <remarks>
+        /// <para><c>Tripped</c> 이벤트는 "지령을 큐에 넣었다" 는 뜻이지 "밸브가 닫혔다" 는 뜻이 아니다.
+        /// <c>CloseValve</c> 는 위치 설정 → PR0 이동 2단 시퀀스라, 두 번째가 타임아웃하면
+        /// <b>밸브가 전혀 움직이지 않는다.</b> 그런데 상위는 이미 인터록이 처리됐다고 본다.</para>
+        /// <para>발동 후 밸브 이동 시간(<c>MoveTimeoutMs</c>)이 지나도 안전 위치가 아니면 알린다.
+        /// 지령을 다시 보내는 것으로는 부족하다. 같은 경로로 다시 실패할 뿐이다.</para>
+        /// </remarks>
+        private void VerifyInterlockEffect(InterlockEvaluation evaluation, SystemSnapshot snapshot)
+        {
+            if (!evaluation.HasTrip)
+            {
+                _interlockTrippedSinceUtc = DateTime.MinValue;
+                return;
+            }
+
+            DateTime nowUtc = _clock.UtcNow;
+
+            if (_interlockTrippedSinceUtc == DateTime.MinValue)
+            {
+                _interlockTrippedSinceUtc = nowUtc;
+                return;
+            }
+
+            double elapsedMs = (nowUtc - _interlockTrippedSinceUtc).TotalMilliseconds;
+
+            if (elapsedMs < Control.Valve.MoveTimeoutMs || _interlockEffectReported)
+            {
+                return;
+            }
+
+            foreach (ChainDefinition chain in Control.Chains)
+            {
+                ValveState valve = snapshot.FindValve(chain.ValveId);
+
+                if (valve != null && valve.Quality == Quality.Good
+                    && valve.PositionPulse > Control.Valve.PositionTolerancePulse)
+                {
+                    _interlockEffectReported = true;
+
+                    _diagnostics.ReportInterlockNotEffective(
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "인터록 발동 후 {0:F0} ms 가 지났으나 밸브 {1} 이 {2} pulse 로 열려 있습니다. "
+                            + "안전 지령이 장치에 도달하지 못했을 수 있습니다.",
+                            elapsedMs, chain.ValveId, valve.PositionPulse),
+                        nowUtc);
+
+                    return;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 안전 경로 장애를 처리한다. 임계를 넘은 실패만 도달한다.
+        /// </summary>
+        /// <param name="sender">이벤트 발신자.</param>
+        /// <param name="e">장애 정보.</param>
+        /// <remarks>
+        /// <para><b>SafeStop 으로 보낸다.</b> Interlocked 가 아니라 SafeStop 인 이유는,
+        /// 여기 도달했다는 것은 "안전 기능이 동작하지 못하는 상태" 이지
+        /// "안전 조건이 성립한 상태" 가 아니기 때문이다. 전자는 원인을 확인하고
+        /// 원점 복귀부터 다시 시작해야 한다.</para>
+        /// <para>실패한 경로로 정지 지령을 보내는 것이 무의미해 보일 수 있으나,
+        /// 실패는 특정 장치나 특정 사이클에 국한될 수 있다. 보낼 수 있는 것은 보내고,
+        /// 무엇보다 <b>자동 제어를 멈추고 작업자에게 알린다.</b></para>
+        /// </remarks>
+        private void OnRuntimeFault(object sender, RuntimeFaultEventArgs e)
+        {
+            // 파킹 지령이 다시 실패해 이 핸들러를 재귀 호출하는 것을 막는다.
+            if (_handlingFault)
+            {
+                return;
+            }
+
+            _handlingFault = true;
+
+            try
+            {
+                _warnings.Add(ConfigWarning.Blocking(
+                    "RUN-" + ((int)e.Kind).ToString(CultureInfo.InvariantCulture),
+                    e.Detail,
+                    "원인을 확인한 뒤 재기동하십시오."));
+
+                Engine.StateMachine.Fire(SystemTrigger.SafeStopRaised);
+                Engine.ParkActuators("안전 경로 장애: " + e.Detail);
+            }
+            finally
+            {
+                _handlingFault = false;
+            }
+        }
+
+        /// <summary>포트 워커의 지령 실패를 처리한다.</summary>        /// <summary>포트 워커의 지령 실패를 처리한다.</summary>
+        /// <param name="sender">이벤트 발신자.</param>
+        /// <param name="e">실패 정보.</param>
+        /// <remarks>
+        /// <para>인터록 지령은 전 워커에 뿌리므로, 담당하지 않는 워커에서는 반드시 실패한다.
+        /// 그것은 정상이므로 세지 않는다. <b>담당 워커가 실패한 경우만</b> 문제다.</para>
+        /// <para>담당 여부는 구성으로 판정한다. 워커가 알려 주는 사유 문자열을 파싱하는 것보다
+        /// device-map 을 보는 편이 확실하다.</para>
+        /// </remarks>
+        private void OnCommandFailed(object sender, CommandFailedEventArgs e)
+        {
+            if (e == null || e.Command == null)
+            {
+                return;
+            }
+
+            if (e.Command.Priority != CommandPriority.Interlock)
+            {
+                // 자동·수동 지령 실패는 다음 주기에 다시 시도되므로 알람으로 충분하다.
+                return;
+            }
+
+            if (!IsOwnedBy(e.PortId, e.Command.DeviceId))
+            {
+                return;
+            }
+
+            _diagnostics.RecordInterlockCommandFailure(e.Command.DeviceId, e.Reason, _clock.UtcNow);
+        }
+
+        /// <summary>지정 포트가 해당 디바이스를 담당하는지 판정한다.</summary>
+        /// <param name="portId">포트 ID.</param>
+        /// <param name="deviceId">디바이스 ID.</param>
+        /// <returns>담당하면 true.</returns>
+        private bool IsOwnedBy(string portId, string deviceId)
+        {
+            DeviceInstanceDefinition device = Map.FindDevice(deviceId);
+
+            return device != null
+                   && string.Equals(device.Port, portId, StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -831,6 +1017,8 @@ namespace Esam.Services
 
             foreach (ModbusPortWorker worker in _workers)
             {
+                worker.PollCompleted -= OnPollCompleted;
+                worker.CommandFailed -= OnCommandFailed;
                 worker.Dispose();
             }
 
