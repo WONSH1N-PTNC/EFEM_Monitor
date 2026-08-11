@@ -2306,9 +2306,14 @@ namespace Esam.Tests
             DeviceMap map = CreateMap();
 
             // 실재하지 않는 포트 이름. 어느 PC 에도 없을 이름을 쓴다.
-            foreach (PortDefinition port in map.Ports)
+            //
+            // 포트마다 다른 이름을 준다. 같은 이름을 두 논리 포트에 배정하면
+            // 구성 검증이 먼저 막는다(실제 버스에서 두 포트가 같은 물리 포트를
+            // 열려다 충돌하므로 그 검증이 옳다).
+            for (int i = 0; i < map.Ports.Count; i++)
             {
-                port.Serial.PortName = "COM_NOT_EXIST_99";
+                map.Ports[i].Serial.PortName =
+                    "COM_NOT_EXIST_" + (90 + i).ToString(CultureInfo.InvariantCulture);
             }
 
             RuntimeOptions options = new RuntimeOptions();
