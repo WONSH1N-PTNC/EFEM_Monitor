@@ -1155,7 +1155,26 @@ namespace Esam.Services
 
             foreach (ModbusPortWorker worker in _workers)
             {
+                // ★ 한 포트가 열리지 않아도 나머지는 시작한다.
+                //
+                // 없는 COM 포트 이름은 커미셔닝에서 가장 흔한 실수다.
+                // 그것으로 기동이 통째로 실패하면 화면을 띄워 원인을 볼 방법도,
+                // 설정을 고칠 방법도 없어진다.
+                //
+                // 열리지 않은 포트의 장치는 NoData 로 남고, 안전 판정이 그 상태를
+                // 전체 정지로 다룬다. 즉 위험하지 않고, 다만 드러나야 한다.
                 worker.Start();
+
+                if (!string.IsNullOrEmpty(worker.LastOpenError))
+                {
+                    AddWarning(ConfigWarning.Blocking(
+                        "COM-01",
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "포트 {0} 를 열지 못했습니다: {1}",
+                            worker.PortId, worker.LastOpenError),
+                        "설정 화면에서 포트 이름을 확인하거나 케이블을 점검하십시오."));
+                }
             }
 
             // Start 트리거만 낸다. Init → ValveHoming → Ready 진행은 제어 엔진이

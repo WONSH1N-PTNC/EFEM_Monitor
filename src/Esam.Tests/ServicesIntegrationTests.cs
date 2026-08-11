@@ -2296,6 +2296,71 @@ namespace Esam.Tests
         }
 
         [Fact]
+        public void 포트를_열_수_없어도_기동이_예외로_끝나지_않는다()
+        {
+            // ★ 회귀 방지. 존재하지 않는 COM 포트 이름으로 Serial 전송을 시작하면
+            // ModbusTransportException 이 화면까지 올라와 프로그램이 죽었다.
+            //
+            // 없는 포트 이름은 커미셔닝에서 가장 흔한 실수다. 그것으로 프로그램이
+            // 죽으면 화면을 띄워 원인을 볼 방법도, 설정을 고칠 방법도 없어진다.
+            DeviceMap map = CreateMap();
+
+            // 실재하지 않는 포트 이름. 어느 PC 에도 없을 이름을 쓴다.
+            foreach (PortDefinition port in map.Ports)
+            {
+                port.Serial.PortName = "COM_NOT_EXIST_99";
+            }
+
+            RuntimeOptions options = new RuntimeOptions();
+            options.Transport = TransportMode.Serial;
+            options.Sensor1Ids = Sensor1Ids;
+            options.Recipe = BuildRecipe(CreateControl());
+
+            _runtime = Track(EsamRuntime.Create(map, CreateControl(), options, _clock));
+            _runtime.AcknowledgeWarnings();
+
+            // 예외가 아니라 구성 경고로 드러나야 한다.
+            _runtime.Start();
+
+            Assert.Contains(_runtime.Warnings, w => w.Code == "COM-01");
+
+            // 차단 경고이므로 자동 운전 진입도 막힌다.
+            Assert.Contains(_runtime.Warnings, w => w.Code == "COM-01" && w.IsBlocking);
+
+            foreach (ModbusPortWorker worker in _runtime.Workers)
+            {
+                Assert.False(string.IsNullOrEmpty(worker.LastOpenError));
+            }
+
+            // ★ 워커 스레드를 띄운 테스트다. 파킹 대기 없이 끊는다.
+            //
+            // Dispose 의 기본 Stop(5000) 은 파킹 완료를 기다리는데,
+            // 포트가 열리지 않았으니 영원히 완료되지 않아 5초를 그냥 쓴다.
+            _runtime.Stop(0);
+        }
+
+        [Fact]
+        public void 시뮬레이션_기동에서는_포트_경고가_없다()
+        {
+            // 위 테스트의 대조군이다. 이것이 없으면 COM-01 이 항상 뜨는
+            // 상태여도 앞 테스트는 통과한다.
+            EsamRuntime runtime = CreateRuntime();
+
+            runtime.Start();
+
+            Assert.DoesNotContain(runtime.Warnings, w => w.Code == "COM-01");
+
+            foreach (ModbusPortWorker worker in runtime.Workers)
+            {
+                Assert.Null(worker.LastOpenError);
+            }
+
+            // 상동. 테스트는 플랜트를 실시간으로 진행시키지 않으므로
+            // 파킹 완료 조건이 성립하지 않는다.
+            runtime.Stop(0);
+        }
+
+        [Fact]
         public void 실시간_진행을_켜면_플랜트_시계를_한_포트만_돌린다()
         {
             // ★ 회귀 방지. 화면에서 밸브가 움직이지 않아 원점 복귀가 끝나지 않았다.

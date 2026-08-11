@@ -73,7 +73,17 @@ namespace Esam.Hmi.ViewModels
 
             if (runtime != null)
             {
-                runtime.Start();
+                // 포트 열기 실패는 EsamRuntime.Start 가 구성 경고로 처리한다.
+                // 그래도 예상 밖 예외로 화면 전환이 깨지지 않도록 감싼다.
+                try
+                {
+                    runtime.Start();
+                }
+                catch (Exception)
+                {
+                    // 사유는 배너의 구성 경고로 드러난다.
+                    // 여기서 던지면 설정 화면이 닫히고 되돌릴 방법이 없어진다.
+                }
             }
 
             Recipe.Load();

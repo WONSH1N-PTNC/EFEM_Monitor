@@ -48,7 +48,18 @@ namespace Esam.Hmi
             {
                 // 워커 스레드를 띄워 실제 폴링을 시작한다.
                 // 이 호출이 없으면 스냅샷이 갱신되지 않아 화면이 초기값에 멈춘다.
-                runtime.Start();
+                //
+                // 포트 열기 실패는 EsamRuntime.Start 가 구성 경고로 처리한다.
+                // 그래도 예상 밖 예외로 창이 뜨지 못하는 일은 없어야 한다.
+                // 화면이 없으면 원인을 볼 수도, 설정을 고칠 수도 없다.
+                try
+                {
+                    runtime.Start();
+                }
+                catch (Exception)
+                {
+                    // 사유는 배너의 구성 경고로 드러난다.
+                }
             }
 
             _shell.Dashboard.Start();

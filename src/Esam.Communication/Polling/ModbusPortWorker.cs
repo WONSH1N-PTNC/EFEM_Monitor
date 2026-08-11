@@ -164,10 +164,15 @@ namespace Esam.Communication.Polling
                     CultureInfo.InvariantCulture, "포트 {0} 워커가 이미 실행 중입니다.", PortId));
             }
 
-            if (!_transport.IsOpen)
-            {
-                _transport.Open();
-            }
+            // ★ 포트를 열지 못해도 워커는 시작한다.
+            //
+            // 없는 COM 포트 이름은 커미셔닝에서 가장 흔한 실수다. 그것으로
+            // 프로그램이 죽으면 화면을 띄워 원인을 볼 방법도, 설정을 고칠 방법도 없다.
+            //
+            // 열지 못하면 모든 트랜잭션이 PortError 로 실패하고, 스냅샷은 NoData 가 된다.
+            // 안전 판정(IL-04)이 그 상태를 전체 정지로 다루므로 위험하지 않다.
+            // 사유는 CommandFailed 로 알린다.
+            TryOpenTransport();
 
             _cancellation = new CancellationTokenSource();
             CancellationToken token = _cancellation.Token;
@@ -183,6 +188,40 @@ namespace Esam.Communication.Polling
                 TaskCreationOptions.LongRunning,
                 TaskScheduler.Default);
         }
+
+        /// <summary>
+        /// 전송 계층을 연다. 실패하면 사유를 알리고 false 를 반환한다.
+        /// </summary>
+        /// <returns>열려 있으면 true.</returns>
+        /// <remarks>
+        /// 예외를 밖으로 내지 않는다. 케이블이 빠졌다가 다시 꽂히는 상황을
+        /// 프로그램 재시작 없이 회복할 수 있어야 한다.
+        /// </remarks>
+        public bool TryOpenTransport()
+        {
+            if (_transport.IsOpen)
+            {
+                return true;
+            }
+
+            try
+            {
+                _transport.Open();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastOpenError = ex.Message;
+
+                RaiseCommandFailed(new CommandFailedEventArgs(
+                    PortId, null, "포트를 열 수 없습니다: " + ex.Message, _clock.UtcNow));
+
+                return false;
+            }
+        }
+
+        /// <summary>마지막 포트 열기 실패 사유. 성공했으면 null.</summary>
+        public string LastOpenError { get; private set; }
 
         /// <summary>폴링 루프를 중지한다.</summary>
         /// <param name="timeoutMs">종료 대기 시간 [ms].</param>
@@ -343,6 +382,14 @@ namespace Esam.Communication.Polling
             while (!token.IsCancellationRequested)
             {
                 Stopwatch iteration = Stopwatch.StartNew();
+
+                // 닫혀 있으면 매 사이클 다시 열어 본다.
+                // 케이블을 다시 꽂거나 변환기 전원이 돌아왔을 때
+                // 프로그램을 재시작하지 않고 회복해야 한다.
+                if (!_transport.IsOpen)
+                {
+                    TryOpenTransport();
+                }
 
                 try
                 {

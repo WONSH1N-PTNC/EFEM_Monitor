@@ -104,6 +104,13 @@ namespace Esam.Hmi.Infrastructure
                 StartupError = "설정 파일 접근이 거부되었습니다: " + ex.Message;
                 return false;
             }
+            catch (Esam.Communication.Abstractions.ModbusTransportException ex)
+            {
+                // 포트를 열 수 없는 경우. 조립 단계에서 여는 경로는 없지만
+                // 실장비 전송 계층이 생성 시점에 검사를 추가할 수 있으므로 함께 잡는다.
+                StartupError = "통신 포트를 열 수 없습니다: " + ex.Message;
+                return false;
+            }
         }
 
         /// <summary>제어 설정을 읽는다. 파일이 없으면 기본값을 쓴다.</summary>
