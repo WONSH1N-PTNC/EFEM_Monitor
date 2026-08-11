@@ -31,18 +31,21 @@ namespace Esam.Tests
     public class ServicesIntegrationTests : IDisposable
     {
         /// <summary>
-        /// 테스트 1건의 상한 시간 [ms].
+        /// 루프 헬퍼가 스스로 포기할 시간 [ms].
         /// </summary>
         /// <remarks>
-        /// <para>xUnit 의 <c>Timeout</c> 은 멈춘 테스트를 <b>포기</b>하지만
-        /// 그 스레드는 계속 돈다. 그래서 루프 헬퍼에도 같은 예산을 걸어
-        /// 테스트가 스스로 멈추고 실패하게 한다. 둘 다 필요하다.</para>
-        /// <para>가장 무거운 시나리오가 수 초 수준이므로 30초면 충분히 여유가 있다.
+        /// <para><b><c>Fact(Timeout = ...)</c> 은 쓸 수 없다.</b> xUnit 은 async 테스트에만
+        /// 적용하며, 동기 테스트에 붙이면 "Tests marked with Timeout are only supported
+        /// for async tests" 로 <b>테스트 자체가 실패</b>한다. 이 프로젝트의 테스트는
+        /// 결정적 실행을 위해 전부 동기다.</para>
+        /// <para>그래서 시간 상한을 루프 헬퍼 안에서 직접 확인한다.
+        /// 가장 무거운 시나리오가 수 초 수준이므로 20초면 여유가 충분하다.
         /// 이 값에 걸린다면 성능 문제가 아니라 진행이 멈춘 것이다.</para>
+        /// <para><b>한계를 분명히 해 둔다.</b> 이 검사는 반복 <i>사이</i>에서만 동작하므로,
+        /// 한 번의 호출이 돌아오지 않으면 잡지 못한다. 그 경우를 막는 것은
+        /// <c>ModbusPortWorker</c> 의 지령 처리 상한이다(D13). 이쪽은 그 밖의
+        /// 진행 정지를 드러내는 두 번째 그물이다.</para>
         /// </remarks>
-        public const int TestTimeoutMs = 30000;
-
-        /// <summary>루프 헬퍼가 스스로 포기할 시간 [ms]. xUnit 상한보다 짧아야 한다.</summary>
         private const int LoopBudgetMs = 20000;
 
         private static readonly string[] Sensor1Ids = { "S1-1", "S1-2", "S1-3" };
@@ -484,7 +487,7 @@ namespace Esam.Tests
 
         // ── 구성 및 배선 ────────────────────────────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 런타임이_포트_2개와_체인_5개로_구성된다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -497,7 +500,7 @@ namespace Esam.Tests
             Assert.NotNull(runtime.Plant);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 구성_검증에_실패하면_런타임을_만들지_않는다()
         {
             // 슬레이브 ID 충돌은 실제 버스에서 두 장치가 동시에 응답해 프레임을 깨뜨린다.
@@ -517,7 +520,7 @@ namespace Esam.Tests
             Assert.Contains("슬레이브", ex.Message);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void IL01_임계값은_운전_대역과_분리된_절대값이다()
         {
             // 안전 임계값이 운전 대역에서 파생되면 두 가지가 깨진다.
@@ -536,7 +539,7 @@ namespace Esam.Tests
             Assert.Equal(0.0, runtime.Interlock.FindRule("IL-01").ThresholdPa.Value);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void IL01_임계값_미지정은_구성_경고로_보고된다()
         {
             // 폴백을 쓰면 전원 투입 직후 래치되어 기동이 불가능해진다. 조용히 넘어가면 안 된다.
@@ -562,7 +565,7 @@ namespace Esam.Tests
             Assert.Contains(_runtime.Warnings, w => w.Message.Contains("IL-01"));
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 안전_입력_PLC가_없으면_경고한다()
         {
             // PLC 미배선 상태에서는 IL-02~IL-05 가 전부 무력하다.
@@ -575,7 +578,7 @@ namespace Esam.Tests
 
         // ── 스냅샷 조립 ─────────────────────────────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 폴링_결과가_스냅샷으로_조립된다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -608,7 +611,7 @@ namespace Esam.Tests
             Assert.InRange(truePv, 16.0, 24.0);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 밸브_상태가_pulse와_개도율로_변환된다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -637,7 +640,7 @@ namespace Esam.Tests
             Assert.True(valve.IsHomeDone);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 통신_실패한_디바이스는_품질이_Bad로_격하된다()
         {
             // 낡은 값을 Good 으로 남기면 통신이 끊긴 센서를 근거로 밸브를 움직인다.
@@ -664,7 +667,7 @@ namespace Esam.Tests
             Assert.Equal(Quality.Good, runtime.Store.Current.FindPressure("S2-2").Quality);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 스냅샷은_교체될_때마다_회차가_증가한다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -675,7 +678,7 @@ namespace Esam.Tests
             Assert.True(runtime.Store.Revision > before);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void PLC가_없으면_디지털_입력이_NoData로_남는다()
         {
             // NoData 와 Bad 를 구분하는 것이 중요하다. Bad 이면 IL-04(통신 상실)가 발동해
@@ -689,7 +692,7 @@ namespace Esam.Tests
 
         // ── 자동 운전 진입 ──────────────────────────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 자동_운전은_Ready_단계에서만_진입한다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -704,7 +707,7 @@ namespace Esam.Tests
             Assert.Equal(SystemPhase.AutoControl, runtime.Engine.StateMachine.Phase);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 팬_사양이_미확보면_자동_운전을_거부한다()
         {
             // MaxRpm 이 0 이면 증속 제어가 불가능하다(Open Issue #20).
@@ -719,7 +722,7 @@ namespace Esam.Tests
             Assert.False(runtime.Engine.RequestAuto());
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 전원_투입_직후_인터록이_발동하지_않는다()
         {
             // ★ 회귀 방지.
@@ -749,7 +752,7 @@ namespace Esam.Tests
 
         // ── S5: 구성 경고와 종료 파킹 (D10, D5) ────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 안전_기능이_빠진_구성에서는_자동_운전에_들어갈_수_없다()
         {
             // ★ D10. 종전에는 경고가 있어도 아무 일 없이 자동 운전이 시작됐다.
@@ -780,7 +783,7 @@ namespace Esam.Tests
             Assert.Equal(SystemPhase.AutoControl, _runtime.Engine.StateMachine.Phase);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 확인해도_경고_목록은_사라지지_않는다()
         {
             // 확인은 "없애는 것" 이 아니라 "인지했음을 기록하는 것" 이다.
@@ -792,7 +795,7 @@ namespace Esam.Tests
             Assert.NotEmpty(runtime.Warnings);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 구성_경고는_심각도로_구분된다()
         {
             // "안전 입력이 없다" 와 "MFC 주소가 미확정이다" 가 같은 무게로 섞이면
@@ -809,7 +812,7 @@ namespace Esam.Tests
             }
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 경고_목록을_열거하는_중에_추가해도_예외가_없다()
         {
             // ★ Warnings 가 내부 리스트를 그대로 반환하면
@@ -846,7 +849,7 @@ namespace Esam.Tests
                 "열거 중 경고가 추가되지 않아 경합을 재현하지 못했습니다.");
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 경고_목록_사본을_수정해도_런타임에_반영되지_않는다()
         {
             // 사본을 주는 결정의 이면이다. 외부가 목록을 바꿔 안전 경고를
@@ -864,7 +867,7 @@ namespace Esam.Tests
 
         // ── 테스트 자원 관리 ────────────────────────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 런타임을_해제하면_포트가_닫힌다()
         {
             // 닫지 않으면 실장비에서는 시리얼 포트 핸들이, 테스트에서는
@@ -893,7 +896,7 @@ namespace Esam.Tests
             }
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 런타임_해제는_두_번_호출해도_안전하다()
         {
             // Dispose 를 테스트 본문과 Dispose() 에서 모두 호출하는 경우가 있다.
@@ -904,7 +907,7 @@ namespace Esam.Tests
             runtime.Dispose();
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 한_테스트에서_만든_런타임은_모두_정리_대상이_된다()
         {
             // ★ _runtime 하나만 정리하던 종전 방식에서는 두 번째 런타임을 만들면
@@ -919,7 +922,7 @@ namespace Esam.Tests
             Assert.Contains(second, _created);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void Describe는_경고_본문을_출력한다()
         {
             // 건수만 찍으면 로그를 봐도 원인을 알 수 없다.
@@ -930,7 +933,7 @@ namespace Esam.Tests
             Assert.Contains("SAFE-01", text);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 종료하면_밸브가_닫히고_팬이_멈춘다()
         {
             // ★ D5. 종료하면 폴링이 멈춰 인터록 평가도 함께 끝난다.
@@ -969,7 +972,7 @@ namespace Esam.Tests
             Assert.Equal(0.0, targetRpm);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 파킹은_비활성_체인도_포함한다()
         {
             // 안전 정지에 예외를 두지 않는다.
@@ -982,7 +985,7 @@ namespace Esam.Tests
             Assert.Equal(10, runtime.Engine.ParkActuators("테스트"));
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 자동_운전을_끄면_액추에이터를_그대로_둔다()
         {
             // 자동 제어를 끄는 것과 기류를 멈추는 것은 다른 요구다.
@@ -1013,7 +1016,7 @@ namespace Esam.Tests
             Assert.Equal(SystemPhase.Ready, runtime.Engine.StateMachine.Phase);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 알람_규칙이_기본_경로에서_로드된다()
         {
             // ★ D9. 종전에는 RuntimeOptions 가 AlarmRules 를 채우는 코드가 없어
@@ -1028,7 +1031,7 @@ namespace Esam.Tests
 
         // ── S5: 안전 경로 실패 감지 (D6, D11) ──────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 판정_예외가_연속되면_SafeStop으로_보낸다()
         {
             // ★ D11. 종전에는 폴링 완료 처리의 예외가 포트 워커의 catch-all 로 흘러가
@@ -1058,7 +1061,7 @@ namespace Esam.Tests
             Assert.Contains(runtime.Warnings, w => w.Code.StartsWith("RUN-", StringComparison.Ordinal));
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 판정이_정상이면_예외_카운터가_초기화된다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -1070,7 +1073,7 @@ namespace Esam.Tests
             Assert.Equal(0L, runtime.Diagnostics.TotalEvaluationFailures);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 인터록_지령이_담당_워커에서_실패하면_센다()
         {
             // ★ D6. CommandFailed 구독자가 하나도 없어, 안전 지령이 장치에 닿지 못해도
@@ -1104,7 +1107,7 @@ namespace Esam.Tests
                 "인터록 지령 실패가 집계되지 않았습니다.");
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 담당하지_않는_포트의_실패는_세지_않는다()
         {
             // 인터록 지령은 전 워커에 뿌리므로 담당하지 않는 워커에서는 반드시 실패한다.
@@ -1125,7 +1128,7 @@ namespace Esam.Tests
             Assert.Equal(0L, runtime.Diagnostics.TotalInterlockCommandFailures);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 인터록_후_밸브가_열린_채로_남으면_실효_실패를_보고한다()
         {
             // Tripped 는 "지령을 큐에 넣었다" 는 뜻이지 "밸브가 닫혔다" 는 뜻이 아니다.
@@ -1175,7 +1178,7 @@ namespace Esam.Tests
 
         // ── S5: 데이터 신선도와 지령 라우팅 (D8, D7) ──────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 낡은_측정값으로는_인터록을_판정하지_않는다()
         {
             // ★ D8. SnapshotBuilder 의 Stale 임계값은 Slow 티어까지 덮어야 해서 15초다.
@@ -1202,7 +1205,7 @@ namespace Esam.Tests
                 "낡은 값을 판정 불가로 보고하지 않았습니다.");
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 신선한_값이면_판정_불가로_보고하지_않는다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -1217,7 +1220,7 @@ namespace Esam.Tests
             Assert.Equal(0, runtime.Diagnostics.ConsecutiveBlindCycles);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 운전_중_판정_불가가_계속되면_SafeStop으로_보낸다()
         {
             // 센서 3 을 읽지 못하면 배기 상실을 감지할 수단이 없다.
@@ -1246,7 +1249,7 @@ namespace Esam.Tests
             Assert.Equal(SystemPhase.SafeStop, runtime.Engine.StateMachine.Phase);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 정지_중에는_판정_불가를_문제로_보지_않는다()
         {
             // 기동 전에는 측정값이 없는 것이 정상이고, 액추에이터도 움직이지 않는다.
@@ -1269,7 +1272,7 @@ namespace Esam.Tests
             Assert.NotEqual(SystemPhase.SafeStop, runtime.Engine.StateMachine.Phase);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 인터록_지령은_담당_포트에만_투입된다()
         {
             // ★ D7. 종전에는 전 워커에 뿌리고 담당하지 않는 워커가 무시하게 했다.
@@ -1303,7 +1306,7 @@ namespace Esam.Tests
             Assert.Equal(0, failures);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 인터록_지령은_매_사이클_반복_투입하지_않는다()
         {
             // 인터록은 래치되므로 발동이 지속되는 동안 매 사이클 같은 지령이 만들어진다.
@@ -1345,7 +1348,7 @@ namespace Esam.Tests
             Assert.Equal(pendingAfterFirst, pendingAfterRepeat);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 재투입_간격이_지나면_다시_확인_사살한다()
         {
             // 한 번만 보내고 마는 것도 안 된다. 지령이 유실되면 복구할 방법이 없어진다.
@@ -1379,7 +1382,7 @@ namespace Esam.Tests
 
         // ── S5: 기동 시퀀스 (D3) ────────────────────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 기동_시퀀스가_원점_복귀를_실제로_지령한다()
         {
             // ★ 회귀 방지.
@@ -1411,7 +1414,7 @@ namespace Esam.Tests
             Assert.True(runtime.Store.Current.FindValve("V-1").IsHomeDone);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 원점_복귀_지령은_매_스텝_반복하지_않는다()
         {
             // 복귀 중인 드라이브에 같은 지령을 다시 보내면 동작을 재시작해 영영 끝나지 않는다.
@@ -1428,7 +1431,7 @@ namespace Esam.Tests
             Assert.Equal(0, runtime.Engine.ExecuteStep());
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 원점_복귀가_끝나지_않으면_타임아웃_후_Fault가_된다()
         {
             // 미완료 상태로 Ready 에 올리면 제어가 성립하지 않는 채 운전에 들어간다.
@@ -1462,7 +1465,7 @@ namespace Esam.Tests
             Assert.Equal(SystemPhase.Fault, runtime.Engine.StateMachine.Phase);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void Stop_후_재시작하면_원점_복귀를_다시_거친다()
         {
             // Stop 이 단계를 되돌리지 않으면 Start 트리거가 무시되고
@@ -1481,7 +1484,7 @@ namespace Esam.Tests
             Assert.Equal(SystemPhase.Init, runtime.Engine.StateMachine.Phase);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 원점_복귀_중_인터록이_발동하면_단계에_반영된다()
         {
             // ★ 회귀 방지.
@@ -1504,7 +1507,7 @@ namespace Esam.Tests
             Assert.Equal(SystemPhase.Interlocked, runtime.Engine.StateMachine.Phase);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 전_체인_정지는_Interlocked가_아니라_SafeStop으로_간다()
         {
             // ★ D1. EMO·차단기·안전입력 상실은 물리 안전장치가 동작한 상황이다.
@@ -1549,7 +1552,7 @@ namespace Esam.Tests
             Assert.Equal(SystemPhase.SafeStop, _runtime.Engine.StateMachine.Phase);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void SafeStop은_해제되면_Ready가_아니라_Fault로_간다()
         {
             List<InterlockRule> rules = new List<InterlockRule>(InterlockEvaluator.CreateDefaultRules());
@@ -1593,7 +1596,7 @@ namespace Esam.Tests
 
         // ── C2: 센서별 설정값 (recipe) ──────────────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 센서별로_다른_설정값이_적용된다()
         {
             // ★ 종전에는 모드별 공통값을 전 체인이 공유했다.
@@ -1625,7 +1628,7 @@ namespace Esam.Tests
             Assert.Equal(-50.0, status.Chains[4].SetpointPa);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 비대칭_대역이_제어에_그대로_전달된다()
         {
             // recipe 는 상한과 하한을 독립적으로 준다.
@@ -1655,7 +1658,7 @@ namespace Esam.Tests
             Assert.Equal(-5.0, chain.HighLimitPa);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 레시피에_센서가_빠지면_자동_운전을_거부한다()
         {
             // 공통값으로 메우면 그 체인만 조용히 다른 기준으로 제어된다.
@@ -1684,7 +1687,7 @@ namespace Esam.Tests
             Assert.Contains("S2-5", _runtime.Engine.LastAutoRejectReason);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 레시피가_없으면_모드별_공통값으로_동작한다()
         {
             // 레시피 도입 전 거동이다. 제어는 성립하므로 막지 않는다.
@@ -1713,7 +1716,7 @@ namespace Esam.Tests
             }
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 레시피가_없으면_구성_경고로_알린다()
         {
             // 조용히 넘어가면 통로별로 값을 넣었다고 믿은 채 공통값으로 운전하게 된다.
@@ -1726,7 +1729,7 @@ namespace Esam.Tests
             Assert.Contains(_runtime.Warnings, w => w.Code == "RCP-01");
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 센서별_설정으로_각_통로가_다른_압력에_수렴한다()
         {
             // 센서별 설정값이 실제로 제어에 반영되는지 종단 검증.
@@ -1766,7 +1769,7 @@ namespace Esam.Tests
 
         // ── 자동 제어 ───────────────────────────────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 자동_제어가_압력을_목표_대역으로_수렴시킨다()
         {
             // ★ S4 의 핵심 검증.
@@ -1795,7 +1798,7 @@ namespace Esam.Tests
             Assert.InRange(pulse, 2500, 5000);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 자동_제어가_전_체인을_동시에_수렴시킨다()
         {
             // 체인 5조가 서로 다른 포트의 밸브를 쓰므로, 지령이 올바른 워커로 전달되어야 한다.
@@ -1813,7 +1816,7 @@ namespace Esam.Tests
             }
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 자동_제어가_아니면_지령을_만들지_않는다()
         {
             // Homing 중이거나 Ready 상태에서 자동 지령이 나가면 안 된다.
@@ -1829,7 +1832,7 @@ namespace Esam.Tests
             Assert.Equal(0, runtime.Engine.ExecuteStep());
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 품질이_나쁜_센서로는_제어하지_않는다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -1872,7 +1875,7 @@ namespace Esam.Tests
             runtime.Plant.Options.Sensor3BasePa = -50.0;
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 배기_상실시_인터록이_발동하고_밸브가_닫힌다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -1905,7 +1908,7 @@ namespace Esam.Tests
             Assert.Equal(0, pulse);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 인터록_지령이_같은_사이클의_자동_지령에_되돌려지지_않는다()
         {
             // ★ 회귀 방지. 인터록의 실효를 0으로 만들던 결함이다.
@@ -1950,7 +1953,7 @@ namespace Esam.Tests
             Assert.Equal(0, pulse);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 인터록이_발동하면_자동_지령이_멈춘다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -1966,7 +1969,7 @@ namespace Esam.Tests
             Assert.Equal(0, runtime.Engine.ExecuteStep());
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 인터록은_Manual_정책이라_Reset_전까지_유지된다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -1992,7 +1995,7 @@ namespace Esam.Tests
             Assert.False(runtime.Interlock.IsTripped);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 조건이_남은_상태에서_Reset하면_즉시_재발동한다()
         {
             // 래치 해제는 원인 제거를 뜻하지 않는다. 원인이 남아 있으면 다시 발동해야 한다.
@@ -2014,7 +2017,7 @@ namespace Esam.Tests
             Assert.True(runtime.Interlock.IsTripped, "원인이 남아 있으면 다시 발동해야 한다.");
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 래치된_인터록은_센서를_읽지_못해도_유지된다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -2037,7 +2040,7 @@ namespace Esam.Tests
             Assert.Contains(runtime.Interlock.LastEvaluation.Trips, t => t.RuleId == "IL-01");
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 평가기를_여러_스레드에서_동시에_호출해도_래치가_유지된다()
         {
             // 실제 배선에서는 포트마다 워커 스레드가 하나이므로 판정이 동시에 일어난다.
@@ -2074,7 +2077,7 @@ namespace Esam.Tests
 
         // ── 알람 ────────────────────────────────────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 알람_규칙이_스냅샷을_평가하고_이력을_남긴다()
         {
             List<AlarmRule> rules = new List<AlarmRule>();
@@ -2125,7 +2128,7 @@ namespace Esam.Tests
 
         // ── 제어 상태 ───────────────────────────────────────────────────────────
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 제어_상태가_스냅샷에_실린다()
         {
             EsamRuntime runtime = CreateRuntime();
@@ -2138,7 +2141,7 @@ namespace Esam.Tests
             Assert.Equal(1, status.Chains[0].ChainId);
         }
 
-        [Fact(Timeout = TestTimeoutMs)]
+        [Fact]
         public void 주소_미확정_그룹은_폴링에서_제외되고_경고로_보고된다()
         {
             // 하드웨어 명세가 미확보인 장치를 구성에 남겨 두어도 통신이 깨지지 않아야 한다.

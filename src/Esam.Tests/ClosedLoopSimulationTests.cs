@@ -218,7 +218,7 @@ namespace Esam.Tests
 
         // ── 수렴 검증 ───────────────────────────────────────────────────────────
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void Sensor2_모드는_목표_대역으로_수렴한다()
         {
             // 문서 기본값(-10 Pa ± 30 → 대역 -40 ~ 20)은 초기 압력 +20 Pa 가 이미 경계에 걸려
@@ -239,7 +239,7 @@ namespace Esam.Tests
             Assert.True(result.FinalPulse < 5000);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 문서_기본_대역은_초기상태에서_거의_즉시_충족된다()
         {
             // Sensor2 기본 대역(-40 ~ 20 Pa)은 폭이 60 Pa 로 매우 넓다.
@@ -253,7 +253,7 @@ namespace Esam.Tests
             Assert.Equal(0, result.FanCommands);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void Sensor3_모드는_목표_대역으로_수렴한다()
         {
             // Sensor3: -200 Pa ± 100 → 대역 -300 ~ -100 Pa. 초기 -50 Pa.
@@ -262,7 +262,7 @@ namespace Esam.Tests
             Assert.InRange(result.FinalPv, -300.0, -100.0);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void Sensor1_모드는_좁은_대역에도_수렴한다()
         {
             // Sensor1: 6 Pa ± 2 → 대역 4 ~ 8 Pa. 세 모드 중 가장 좁아 수렴이 까다롭다.
@@ -273,7 +273,7 @@ namespace Esam.Tests
 
         // ── Dwell 파라미터의 효과 ───────────────────────────────────────────────
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void Dwell이_충분하면_단조_수렴하고_팬을_건드리지_않는다()
         {
             LoopResult result = RunClosedLoop(SensorMode.Sensor1, 1000, 1000, 600);
@@ -293,7 +293,7 @@ namespace Esam.Tests
                 "Dwell 이 충분하면 밸브가 완전 열림까지 가지 않아야 한다.");
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void Dwell이_없으면_오버슈트하여_대역을_이탈한다()
         {
             // 이것이 Dwell 파라미터가 필요한 이유의 수치적 근거다.
@@ -319,7 +319,7 @@ namespace Esam.Tests
             Assert.True(withDwell.FanCommands < noDwell.FanCommands);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 수렴_후에는_지령이_더_발생하지_않는다()
         {
             // 정상 대역에 들어오면 밸브·팬을 유지해야 한다(순서도 "위치 유지 / 팬 유지").
@@ -330,7 +330,7 @@ namespace Esam.Tests
             Assert.Equal(shortRun.FinalPulse, longRun.FinalPulse);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 노이즈가_있어도_대역_안에_머문다()
         {
             // 실제 센서 노이즈가 섞이면 대역 경계에서 지령이 튈 수 있다.

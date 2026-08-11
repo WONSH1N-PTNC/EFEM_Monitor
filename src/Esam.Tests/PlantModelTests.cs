@@ -11,7 +11,7 @@ namespace Esam.Tests
     /// <summary>1차 지연 및 노이즈 모델 검증.</summary>
     public class FirstOrderLagTests
     {
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 시정수_경과_시_목표의_63퍼센트에_도달한다()
         {
             // 1차 지연의 정의: t = τ 에서 최종값의 1 - 1/e = 63.212%
@@ -26,7 +26,7 @@ namespace Esam.Tests
             Assert.Equal(63.212, lag.Value, 1);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 큰_dt에서도_발산하지_않고_목표를_넘지_않는다()
         {
             // 오일러 근사를 쓰면 dt > 2τ 에서 진동·발산한다. 지수 해는 항상 안정하다.
@@ -37,7 +37,7 @@ namespace Esam.Tests
             Assert.InRange(lag.Value, 99.9, 100.0);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 시정수가_0이면_즉시_추종한다()
         {
             FirstOrderLag lag = new FirstOrderLag(0.0, 0.0);
@@ -45,13 +45,13 @@ namespace Esam.Tests
             Assert.Equal(50.0, lag.Advance(50.0, 0.1), 6);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 음수_시정수는_거부한다()
         {
             Assert.Throws<ArgumentOutOfRangeException>(() => new FirstOrderLag(-1.0, 0.0));
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 같은_시드는_같은_노이즈_수열을_만든다()
         {
             // 시뮬레이션 테스트가 재현 가능해야 회귀 검증이 성립한다.
@@ -64,7 +64,7 @@ namespace Esam.Tests
             }
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 노이즈의_표준편차가_지정값에_수렴한다()
         {
             GaussianNoise noise = new GaussianNoise(777);
@@ -88,7 +88,7 @@ namespace Esam.Tests
             Assert.InRange(std, sigma * 0.97, sigma * 1.03);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 시그마가_0이면_노이즈가_없다()
         {
             GaussianNoise noise = new GaussianNoise(1);
@@ -99,7 +99,7 @@ namespace Esam.Tests
             }
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 이동평균_필터가_노이즈를_실제로_줄인다()
         {
             // 창 크기 N 의 이동평균은 백색노이즈 표준편차를 1/sqrt(N) 로 줄인다.
@@ -143,7 +143,7 @@ namespace Esam.Tests
             return plant;
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 초기상태는_밸브_닫힘_팬_정지이다()
         {
             PlantModel plant = CreatePlant();
@@ -160,7 +160,7 @@ namespace Esam.Tests
             Assert.Equal(0.0, rpm);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 전원_ON_직후에는_원점복귀가_완료되지_않은_상태다()
         {
             // 밸브 드라이브는 전원 ON 후 Homing 을 요구한다.
@@ -181,7 +181,7 @@ namespace Esam.Tests
             Assert.True(home);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 밸브를_열면_압력이_내려간다()
         {
             // ESAM 순서도의 "압력상한 초과 → 밸브 위치 증가"가 성립하려면
@@ -205,7 +205,7 @@ namespace Esam.Tests
             Assert.True(after < before);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 팬을_증속하면_압력이_추가로_내려간다()
         {
             PlantModel plant = CreatePlant();
@@ -232,7 +232,7 @@ namespace Esam.Tests
             Assert.True(after < before - 20.0);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 밸브는_지정_속도로만_이동한다()
         {
             // 지령 즉시 반영 모델이면 Dwell 파라미터 검증이 불가능하다.
@@ -255,7 +255,7 @@ namespace Esam.Tests
             Assert.Equal(5000, target);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 기본_파라미터는_ESAM_목표_운전점을_재현한다()
         {
             // 밸브 50%, 팬 33% 에서 센서2 ≈ -10 Pa, 센서3 ≈ -200 Pa, 센서1 ≈ 6 Pa 가 나와야
@@ -287,7 +287,7 @@ namespace Esam.Tests
             Assert.InRange(s3, -210.0, -190.0); // 목표 -200 Pa
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 센서1은_전_체인의_평균에_반응한다()
         {
             // 센서 1은 EFEM 내부 공통이므로 한 체인만 움직여도 영향이 있지만
@@ -317,7 +317,7 @@ namespace Esam.Tests
             Assert.True(allChains < oneChain);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 알_수_없는_디바이스_ID는_무시한다()
         {
             PlantModel plant = CreatePlant();
@@ -329,7 +329,7 @@ namespace Esam.Tests
             Assert.False(plant.TryGetPressure("S9-9", out dummy));
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 체인_정의가_비어있으면_예외를_던진다()
         {
             Assert.Throws<ArgumentException>(() =>

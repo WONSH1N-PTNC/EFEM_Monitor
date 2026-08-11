@@ -21,7 +21,7 @@ namespace Esam.Tests
             return ActuatorCommand.SetValvePosition(id, pulse, priority, "테스트");
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 인터록_지령이_항상_먼저_나온다()
         {
             // 자동 제어가 200ms 마다 지령을 쌓는 상황에서도
@@ -45,7 +45,7 @@ namespace Esam.Tests
             Assert.Equal(CommandPriority.Automatic, third.Priority);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 같은_대상의_중복_지령은_최신값으로_병합한다()
         {
             // 통신이 잠시 느려졌을 때 오래된 지령이 뒤늦게 실행되어
@@ -63,7 +63,7 @@ namespace Esam.Tests
             Assert.Equal(2200.0, command.Value);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 다른_대상의_지령은_병합하지_않는다()
         {
             CommandQueue queue = new CommandQueue();
@@ -74,7 +74,7 @@ namespace Esam.Tests
             Assert.Equal(2, queue.Count);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 인터록_지령은_병합하지_않는다()
         {
             // 안전 지령은 하나도 유실되어서는 안 된다.
@@ -86,7 +86,7 @@ namespace Esam.Tests
             Assert.Equal(2, queue.Count);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 자동지령만_비울_수_있다()
         {
             CommandQueue queue = new CommandQueue();
@@ -101,7 +101,7 @@ namespace Esam.Tests
             Assert.True(queue.HasInterlockCommand);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 배치로_꺼내면_우선순위_순서를_유지한다()
         {
             CommandQueue queue = new CommandQueue();
@@ -119,7 +119,7 @@ namespace Esam.Tests
             Assert.Equal(0, queue.Count);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 빈_큐에서는_꺼내지_못한다()
         {
             ActuatorCommand command;
@@ -128,7 +128,7 @@ namespace Esam.Tests
             Assert.Null(command);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 수동_지령은_낡은_자동_지령을_무효화한다()
         {
             // 이 처리가 없으면 워커가 Manual 을 먼저 실행한 뒤 Automatic 을 실행해
@@ -146,7 +146,7 @@ namespace Esam.Tests
             Assert.Equal(3000.0, command.Value);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 인터록_지령은_같은_장치의_하위_지령을_종류와_무관하게_제거한다()
         {
             // ★ 회귀 방지. 종류(Kind)까지 비교하면 인터록의 실효가 0이 된다.
@@ -169,7 +169,7 @@ namespace Esam.Tests
             Assert.Equal(ActuatorCommandKind.CloseValve, only.Kind);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 인터록_지령끼리는_병합하지_않는다()
         {
             // 안전 지령은 모두 실행되어야 한다. 같은 장치라도 합치지 않는다.
@@ -184,7 +184,7 @@ namespace Esam.Tests
             Assert.All(batch, c => Assert.Equal(CommandPriority.Interlock, c.Priority));
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 다른_대상의_하위_지령은_유지된다()
         {
             CommandQueue queue = new CommandQueue();
@@ -195,7 +195,7 @@ namespace Esam.Tests
             Assert.Equal(2, queue.Count);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void null_지령은_무시한다()
         {
             CommandQueue queue = new CommandQueue();
@@ -275,7 +275,7 @@ namespace Esam.Tests
 
         private readonly DeclarativeCommandTranslator _translator = new DeclarativeCommandTranslator();
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 밸브_이동은_위치설정_후_Move_2단계로_펼쳐진다()
         {
             // 통신자료 규정: 0x6202 에 위치를 쓴 뒤 0x6002 ← 0x10 을 써야 실제로 움직인다.
@@ -296,7 +296,7 @@ namespace Esam.Tests
             Assert.Equal(0x0010, requests[1].Values[0]);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 밸브_Close는_위치_0으로_이동시킨다()
         {
             IList<ModbusRequest> requests;
@@ -310,7 +310,7 @@ namespace Esam.Tests
             Assert.Equal(0, requests[0].Values[0]);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 밸브_지령은_pulse_한계로_제한된다()
         {
             IList<ModbusRequest> requests;
@@ -323,7 +323,7 @@ namespace Esam.Tests
             Assert.Equal(5000, requests[0].Values[0]);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void Homing과_QuickStop은_단일_요청이다()
         {
             DeviceRuntime valve = CreateValve();
@@ -345,7 +345,7 @@ namespace Esam.Tests
             Assert.Equal(0x0040, requests[0].Values[0]);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 팬_RPM은_최대치로_제한된다()
         {
             IList<ModbusRequest> requests;
@@ -358,7 +358,7 @@ namespace Esam.Tests
             Assert.Equal(3000, requests[0].Values[0]);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 팬_정지는_전용_명령이_없으면_RPM_0으로_대체한다()
         {
             // 안전 정지 경로이므로 전용 명령 부재를 이유로 실패시키지 않는다.
@@ -374,7 +374,7 @@ namespace Esam.Tests
             Assert.Equal(0, requests[0].Values[0]);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 명령_정의가_없으면_사유와_함께_실패한다()
         {
             DeviceTypeDefinition bare = new DeviceTypeDefinition();
@@ -400,7 +400,7 @@ namespace Esam.Tests
             Assert.Contains("setPosition", reason);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 주소_미확정_명령은_실패한다()
         {
             DeviceRuntime fan = CreateFan();
@@ -416,7 +416,7 @@ namespace Esam.Tests
             Assert.Contains("미확정", reason);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 대상_디바이스가_null이면_실패한다()
         {
             IList<ModbusRequest> requests;
@@ -427,7 +427,7 @@ namespace Esam.Tests
                 null, out requests, out reason));
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 개도율을_pulse로_변환한다()
         {
             Assert.Equal(2500, DeclarativeCommandTranslator.PercentToPulse(CreateValve(), 50.0));
@@ -553,7 +553,7 @@ namespace Esam.Tests
 
         // ── 폴링 동작 ───────────────────────────────────────────────────────────
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 첫_사이클은_Fast와_Medium_Slow를_모두_읽는다()
         {
             // 시작 직후에는 모든 티어가 "읽을 때가 됨" 상태다.
@@ -566,7 +566,7 @@ namespace Esam.Tests
             Assert.Equal(SensorCount * 2, result.Results.Count);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 두번째_사이클부터는_Fast만_읽는다()
         {
             _worker.ExecuteCycle(CancellationToken.None);
@@ -577,7 +577,7 @@ namespace Esam.Tests
             Assert.Equal(SensorCount, second.Results.Count);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 압력값을_공학단위로_디코딩한다()
         {
             PollCompletedEventArgs result = _worker.ExecuteCycle(CancellationToken.None);
@@ -593,7 +593,7 @@ namespace Esam.Tests
             Assert.Equal("Pa", sample.Unit);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 음압을_부호있게_디코딩한다()
         {
             _plant.ApplyCommand(ActuatorCommand.SetValvePosition(
@@ -610,7 +610,7 @@ namespace Esam.Tests
             Assert.InRange(sample.Value, -21.0, -19.0);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 통신_실패는_결과에_실패로_기록된다()
         {
             _transport.DetachSlave(4); // S2-1 분리
@@ -634,7 +634,7 @@ namespace Esam.Tests
             Assert.Empty(failed.Samples);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 연속_실패가_누적되어_통신상실을_판정할_수_있다()
         {
             // 인터록 IL-04(통신 상실) 판정의 근거 데이터다.
@@ -651,7 +651,7 @@ namespace Esam.Tests
             Assert.False(_devices[4].IsCommunicationLost(3)); // S2-2 는 정상
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 사이클타임_실측값이_설계문서_추정과_일치한다()
         {
             // ★ S3 의 핵심 산출물.
@@ -679,7 +679,7 @@ namespace Esam.Tests
                 "단일 버스 13채널로 100ms 를 만족할 수 없다는 것이 설계 결론이다.");
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 포트를_4채널씩_나누면_100ms대에_들어온다()
         {
             // DESIGN.md 2.2(B) 안 1 의 근거. 앞 4대만 폴링해 비교한다.
@@ -709,7 +709,7 @@ namespace Esam.Tests
 
         // ── 지령 처리 ───────────────────────────────────────────────────────────
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 주소_미확정_그룹은_폴링에서_제외된다()
         {
             // 레지스터 명세가 확보되지 않은 장치가 섞여 있어도 나머지는 정상 폴링되어야 한다.
@@ -738,7 +738,7 @@ namespace Esam.Tests
             Assert.Equal("digital", plc.SkippedGroups[0]);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 지령_실패시_사유와_함께_이벤트가_발생한다()
         {
             CommandFailedEventArgs captured = null;
@@ -752,7 +752,7 @@ namespace Esam.Tests
             Assert.Contains("V-99", captured.Reason);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 폴링_완료_이벤트가_발생한다()
         {
             PollCompletedEventArgs captured = null;
@@ -765,7 +765,7 @@ namespace Esam.Tests
             Assert.True(captured.SuccessCount > 0);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 구독자_예외가_폴링을_멈추지_않는다()
         {
             // 로깅이나 UI 구독자가 터져도 통신은 계속되어야 한다.
@@ -777,7 +777,7 @@ namespace Esam.Tests
             Assert.True(result.SuccessCount > 0);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 취소_토큰이_설정되면_읽기를_중단한다()
         {
             using (CancellationTokenSource cts = new CancellationTokenSource())
@@ -790,7 +790,7 @@ namespace Esam.Tests
             }
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 통계가_트랜잭션을_집계한다()
         {
             _worker.ExecuteCycle(CancellationToken.None);
@@ -800,7 +800,7 @@ namespace Esam.Tests
             Assert.True(_worker.Statistics.LastCycleMs >= 0.0);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 영점_오프셋을_적용하면_측정값이_보정된다()
         {
             DeviceRuntime sensor = _devices[3]; // S2-1, 현재 참값 +20 Pa
@@ -814,7 +814,7 @@ namespace Esam.Tests
             Assert.Equal(20.0, sample.RawValue, 6);
         }
 
-        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
+        [Fact]
         public void 영점_오프셋은_상태_레지스터를_오염시키지_않는다()
         {
             // ApplyCalibration 이 없던 시절의 결함: 오프셋 20 을 교정하면
