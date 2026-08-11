@@ -12,7 +12,10 @@ namespace Esam.Hmi.ViewModels
         Operate = 0,
 
         /// <summary>설정 — 레시피 편집.</summary>
-        ConfigRecipe = 1
+        ConfigRecipe = 1,
+
+        /// <summary>설정 — 통신·통로·표시.</summary>
+        ConfigSystem = 2
     }
 
     /// <summary>
@@ -27,6 +30,7 @@ namespace Esam.Hmi.ViewModels
     /// </remarks>
     public sealed class ShellViewModel : ObservableObject
     {
+        private readonly HmiHost _host;
         private readonly ManualWriteAccessProvider _writeAccess;
         private ShellScreen _screen = ShellScreen.Operate;
 
@@ -34,6 +38,8 @@ namespace Esam.Hmi.ViewModels
         /// <param name="host">런타임 호스트. null 이면 디자인타임으로 동작한다.</param>
         public ShellViewModel(HmiHost host)
         {
+            _host = host;
+
             EsamRuntime runtime = host == null ? null : host.Runtime;
 
             _writeAccess = host == null ? null : host.WriteAccessControl;
@@ -41,13 +47,46 @@ namespace Esam.Hmi.ViewModels
             Dashboard = new DashboardViewModel(runtime);
             Banner = new SystemBannerViewModel(host);
             Recipe = new RecipeEditorViewModel(host);
+            Settings = new SettingsViewModel(host, OnRuntimeRebuilt);
 
             SelectScreenCommand = new RelayCommand(OnSelectScreen);
             ToggleWriteAccessCommand = new RelayCommand(OnToggleWriteAccess);
         }
 
+        /// <summary>
+        /// 런타임이 재조립되면 화면을 새 런타임에 다시 붙인다.
+        /// </summary>
+        /// <remarks>
+        /// <para>대시보드는 런타임 참조를 생성자에서 받으므로 새로 만들어야 한다.
+        /// 옛 인스턴스를 그대로 두면 사라진 런타임의 스냅샷을 계속 읽어
+        /// <b>값이 멈춘 화면</b>이 된다. 통신이 끊긴 것과 구분되지 않는다.</para>
+        /// <para>배너는 호스트를 들고 있으므로 다시 만들 필요가 없다.
+        /// 호스트가 새 런타임을 가리키면 다음 갱신에 따라온다.</para>
+        /// </remarks>
+        private void OnRuntimeRebuilt()
+        {
+            EsamRuntime runtime = _host == null ? null : _host.Runtime;
+
+            Dashboard.Stop();
+            Dashboard = new DashboardViewModel(runtime);
+            Dashboard.Start();
+
+            if (runtime != null)
+            {
+                runtime.Start();
+            }
+
+            Recipe.Load();
+            Banner.Refresh();
+
+            Raise("Dashboard");
+        }
+
         /// <summary>운전 대시보드.</summary>
         public DashboardViewModel Dashboard { get; private set; }
+
+        /// <summary>통신·통로·표시 설정.</summary>
+        public SettingsViewModel Settings { get; private set; }
 
         /// <summary>구성 경고 배너.</summary>
         public SystemBannerViewModel Banner { get; private set; }
@@ -71,6 +110,12 @@ namespace Esam.Hmi.ViewModels
         public bool IsConfigRecipe
         {
             get { return _screen == ShellScreen.ConfigRecipe; }
+        }
+
+        /// <summary>시스템 설정 화면을 보고 있는지 여부.</summary>
+        public bool IsConfigSystem
+        {
+            get { return _screen == ShellScreen.ConfigSystem; }
         }
 
         /// <summary>쓰기가 허용된 상태인지 여부.</summary>
@@ -104,6 +149,11 @@ namespace Esam.Hmi.ViewModels
                 // 저장할 때 그것이 그대로 덮어쓴다.
                 Recipe.Load();
             }
+            else if (string.Equals(name, "ConfigSystem", StringComparison.OrdinalIgnoreCase))
+            {
+                _screen = ShellScreen.ConfigSystem;
+                Settings.Load();
+            }
             else
             {
                 _screen = ShellScreen.Operate;
@@ -111,6 +161,7 @@ namespace Esam.Hmi.ViewModels
 
             Raise("IsOperate");
             Raise("IsConfigRecipe");
+            Raise("IsConfigSystem");
         }
 
         /// <summary>쓰기 잠금을 토글한다.</summary>

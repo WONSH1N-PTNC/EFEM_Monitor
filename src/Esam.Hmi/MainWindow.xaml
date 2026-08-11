@@ -52,10 +52,17 @@
                                  Style="{StaticResource NavButtonStyle}"
                                  Margin="0,0,0,6" />
 
-                    <RadioButton Content="Config" GroupName="ScreenGroup"
+                    <RadioButton Content="Recipe" GroupName="ScreenGroup"
                                  IsChecked="{Binding IsConfigRecipe, Mode=OneWay}"
                                  Command="{Binding SelectScreenCommand}"
                                  CommandParameter="ConfigRecipe"
+                                 Style="{StaticResource NavButtonStyle}"
+                                 Margin="0,0,0,6" />
+
+                    <RadioButton Content="Settings" GroupName="ScreenGroup"
+                                 IsChecked="{Binding IsConfigSystem, Mode=OneWay}"
+                                 Command="{Binding SelectScreenCommand}"
+                                 CommandParameter="ConfigSystem"
                                  Style="{StaticResource NavButtonStyle}" />
                 </StackPanel>
 
@@ -112,6 +119,21 @@
                     </Style>
                 </views:RecipeEditorView.Style>
             </views:RecipeEditorView>
+
+            <views:SettingsView DataContext="{Binding Settings}">
+                <views:SettingsView.Style>
+                    <Style TargetType="views:SettingsView">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.IsConfigSystem,
+                                             RelativeSource={RelativeSource AncestorType=Window}}"
+                                         Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:SettingsView.Style>
+            </views:SettingsView>
         </Grid>
     </DockPanel>
 </Window>

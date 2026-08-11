@@ -56,9 +56,12 @@
 
         <!-- ══ 잠금 안내 ═══════════════════════════════════════════════════════ -->
         <Border Grid.Row="1"
-                Style="{StaticResource InsetBorderStyle}"
                 Padding="12,8"
                 Margin="0,10,0,0">
+            <!--
+                Style 을 속성과 요소로 동시에 지정할 수 없다.
+                BasedOn 으로 기본 스타일을 물려받고 가시성만 덧붙인다.
+            -->
             <Border.Style>
                 <Style TargetType="Border" BasedOn="{StaticResource InsetBorderStyle}">
                     <Setter Property="Visibility" Value="Collapsed" />

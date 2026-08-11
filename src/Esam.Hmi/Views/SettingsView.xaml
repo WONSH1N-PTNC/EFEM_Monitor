@@ -1,0 +1,242 @@
+<UserControl x:Class="Esam.Hmi.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignWidth="1400" d:DesignHeight="800"
+             Background="{StaticResource BgRootBrush}"
+             FontFamily="{StaticResource UiFont}">
+
+    <UserControl.Resources>
+        <Style x:Key="FieldBoxStyle" TargetType="TextBox">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="CaretBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Background" Value="{StaticResource BgInsetBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Margin" Value="0,0,10,0" />
+            <Style.Triggers>
+                <Trigger Property="IsFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="SETTINGS — 통신 · 통로 · 표시"
+                       FontSize="18" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}" />
+            <TextBlock Text="{Binding ConfigFolder, StringFormat=설정 폴더: {0}}"
+                       FontSize="11"
+                       Margin="0,4,0,0"
+                       FontFamily="{StaticResource MonoFont}"
+                       Foreground="{StaticResource TextMutedBrush}" />
+        </StackPanel>
+
+        <!-- 적용을 막는 사유. 이유 없이 눌리지 않는 버튼은 프로그램이 멈춘 것처럼 보인다. -->
+        <Border Grid.Row="1" Padding="12,8" Margin="0,10,0,0">
+            <Border.Style>
+                <Style TargetType="Border" BasedOn="{StaticResource InsetBorderStyle}">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding BlockReason}" Value="{x:Null}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+
+            <TextBlock Text="{Binding BlockReason}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Foreground="{StaticResource StatusWarnBrush}" />
+        </Border>
+
+        <ScrollViewer Grid.Row="2" Margin="0,14,0,0"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
+
+                <!-- ══ 전송 방식 ═════════════════════════════════════════════ -->
+                <TextBlock Text="TRANSPORT" Style="{StaticResource MicroLabelStyle}"
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8" />
+
+                <Border Style="{StaticResource CardBorderStyle}" Padding="14,12" Margin="0,0,0,18">
+                    <StackPanel>
+                        <CheckBox Content="시뮬레이션 전송 사용 (가상 플랜트)"
+                                  IsChecked="{Binding UseSimulation}"
+                                  Foreground="{StaticResource TextPrimaryBrush}"
+                                  FontSize="13" />
+
+                        <TextBlock Margin="0,8,0,0"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   Text="끄면 실제 RS-485 포트로 통신합니다. 전송 방식을 바꾸면 런타임을 다시 세우며, 그 전에 액추에이터를 안전 위치로 보냅니다." />
+                    </StackPanel>
+                </Border>
+
+                <!-- ══ 통신 포트 ═════════════════════════════════════════════ -->
+                <TextBlock Text="MODBUS PORTS" Style="{StaticResource MicroLabelStyle}"
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8" />
+
+                <Border Style="{StaticResource CardBorderStyle}" Padding="14,10" Margin="0,0,0,18">
+                    <ItemsControl ItemsSource="{Binding Ports}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="70" />
+                                        <ColumnDefinition Width="150" />
+                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0" Text="{Binding PortId}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="13" FontWeight="Bold"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource TextPrimaryBrush}" />
+
+                                    <TextBox Grid.Column="1"
+                                             Style="{StaticResource FieldBoxStyle}"
+                                             IsEnabled="{Binding DataContext.IsLocked,
+                                                 RelativeSource={RelativeSource AncestorType=UserControl},
+                                                 Converter={StaticResource InverseBooleanConverter}}"
+                                             Text="{Binding PortName, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <TextBox Grid.Column="2"
+                                             Style="{StaticResource FieldBoxStyle}"
+                                             IsEnabled="{Binding DataContext.IsLocked,
+                                                 RelativeSource={RelativeSource AncestorType=UserControl},
+                                                 Converter={StaticResource InverseBooleanConverter}}"
+                                             Text="{Binding BaudRate, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <TextBlock Grid.Column="3"
+                                               Text="{Binding FastMs, StringFormat=Fast {0} ms}"
+                                               FontSize="11"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource TextMutedBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Border>
+
+                <!-- ══ 통로 활성화 ═══════════════════════════════════════════ -->
+                <TextBlock Text="AIRFLOW CHAINS" Style="{StaticResource MicroLabelStyle}"
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8" />
+
+                <Border Style="{StaticResource CardBorderStyle}" Padding="14,10" Margin="0,0,0,18">
+                    <StackPanel>
+                        <ItemsControl ItemsSource="{Binding Chains}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <CheckBox Content="{Binding Label}"
+                                              IsChecked="{Binding IsEnabled}"
+                                              Margin="0,5"
+                                              FontSize="13"
+                                              Foreground="{StaticResource TextPrimaryBrush}"
+                                              IsEnabled="{Binding DataContext.IsLocked,
+                                                  RelativeSource={RelativeSource AncestorType=UserControl},
+                                                  Converter={StaticResource InverseBooleanConverter}}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <TextBlock Margin="0,8,0,0"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   Text="설치되지 않은 통로는 꺼 두십시오. 비활성 통로는 제어에서 제외되지만 인터록은 그대로 적용됩니다." />
+                    </StackPanel>
+                </Border>
+
+                <!-- ══ 표시 ═════════════════════════════════════════════════ -->
+                <TextBlock Text="DISPLAY" Style="{StaticResource MicroLabelStyle}"
+                           Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8" />
+
+                <Border Style="{StaticResource CardBorderStyle}" Padding="14,12" Margin="0,0,0,8">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="게이지 눈금 배율"
+                                   FontSize="13"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,12,0"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+
+                        <TextBox Width="90"
+                                 Style="{StaticResource FieldBoxStyle}"
+                                 Text="{Binding GaugeSpanText, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <TextBlock Text="대역의 몇 배까지 눈금에 표시할지 (1.0 ~ 10.0)"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextMutedBrush}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ══ 상태 · 버튼 ═══════════════════════════════════════════════════ -->
+        <Grid Grid.Row="3" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="{Binding StatusText}" FontSize="12" TextWrapping="Wrap">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasError}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource StatusBadBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <ScrollViewer MaxHeight="96" Margin="0,6,0,0"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Errors}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap"
+                                           FontSize="11" Margin="0,1"
+                                           Foreground="{StaticResource TextMutedBrush}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                <Button Content="되돌리기"
+                        Command="{Binding ReloadCommand}"
+                        Style="{StaticResource ConsoleButtonStyle}"
+                        MinWidth="90" Margin="0,0,8,0" />
+
+                <Button Content="적용 · 재기동"
+                        Command="{Binding ApplyCommand}"
+                        Style="{StaticResource ConsoleButtonStyle}"
+                        MinWidth="130" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>
