@@ -5,8 +5,13 @@ using System.Globalization;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Esam.Domain.Alarms;
+using Esam.Domain.Configuration;
+using Esam.Domain.Control;
+using Esam.Domain.Models;
 using Esam.Hmi.Controls;
 using Esam.Hmi.Infrastructure;
+using Esam.Services;
 
 namespace Esam.Hmi.ViewModels
 {
@@ -61,7 +66,18 @@ namespace Esam.Hmi.ViewModels
             new[] { 6.1, -10.6, -201.0 }
         };
 
-        private readonly Random _random = new Random(20260804);
+        /// <summary>
+        /// 값을 끌어올 런타임. null 이면 디자인타임(정적 표본)으로 동작한다.
+        /// </summary>
+        /// <remarks>
+        /// <para><b>구독하지 않고 당긴다.</b> <c>DataStore.SnapshotPublished</c> 는
+        /// 포트 워커 스레드에서 발생한다. 거기서 바인딩 속성을 건드리면 WPF 가 예외를
+        /// 던지므로, 타이머가 <c>DataStore.Current</c> 를 읽는 방식으로 둔다.</para>
+        /// <para>스냅샷을 불변으로 만들고 통째로 교체하도록 설계한 이유가 이것이다.
+        /// 당겨오기만 하면 스레드 마샬링 자체가 필요 없다.</para>
+        /// </remarks>
+        private readonly EsamRuntime _runtime;
+
         private readonly List<double[]> _history1 = new List<double[]>();
         private readonly List<double[]> _history2 = new List<double[]>();
         private readonly List<double[]> _history3 = new List<double[]>();
@@ -86,9 +102,18 @@ namespace Esam.Hmi.ViewModels
         private int _trendDecimals;
         private long _trendRevision;
 
-        /// <summary>대시보드 상태를 생성한다.</summary>
+        /// <summary>디자인타임용으로 생성한다. 값이 움직이지 않는다.</summary>
         public DashboardViewModel()
+            : this(null)
         {
+        }
+
+        /// <summary>대시보드 상태를 생성한다.</summary>
+        /// <param name="runtime">값을 끌어올 런타임. null 이면 디자인타임 표본을 쓴다.</param>
+        public DashboardViewModel(EsamRuntime runtime)
+        {
+            _runtime = runtime;
+
             Chains = new ObservableCollection<ChainCardViewModel>();
             Sensor1Gauges = new ObservableCollection<GaugeViewModel>();
             ChamberReadouts = new ObservableCollection<ReadoutViewModel>();
@@ -173,15 +198,42 @@ namespace Esam.Hmi.ViewModels
         }
 
         /// <summary>장비 운전 상태 표기.</summary>
+        /// <remarks>
+        /// 상태머신의 단계를 그대로 보여준다. 고정 문자열을 두면 인터록이 걸려
+        /// 정지한 장비가 화면에는 계속 <c>AUTO RUN</c> 으로 보인다.
+        /// </remarks>
         public string EquipmentState
         {
-            get { return "AUTO RUN"; }
+            get
+            {
+                if (_runtime == null)
+                {
+                    return "DESIGN";
+                }
+
+                switch (_runtime.Engine.StateMachine.Phase)
+                {
+                    case SystemPhase.Idle: return "IDLE";
+                    case SystemPhase.Init: return "INIT";
+                    case SystemPhase.ValveHoming: return "HOMING";
+                    case SystemPhase.Ready: return "READY";
+                    case SystemPhase.AutoControl: return "AUTO RUN";
+                    case SystemPhase.Interlocked: return "INTERLOCK";
+                    case SystemPhase.SafeStop: return "SAFE STOP";
+                    case SystemPhase.Fault: return "FAULT";
+                    default: return "UNKNOWN";
+                }
+            }
         }
 
         /// <summary>외부 모니터링(FDC) 연결 상태 표기.</summary>
+        /// <remarks>
+        /// SECS/GEM 모듈은 아직 없다(S7 범위 밖). 연결된 척 <c>ONLINE</c> 을 표시하면
+        /// 상위 보고가 되고 있다고 오판하므로 미구현임을 그대로 드러낸다.
+        /// </remarks>
         public string HostState
         {
-            get { return "ONLINE"; }
+            get { return "GEM N/A"; }
         }
 
         #endregion
@@ -425,8 +477,13 @@ namespace Esam.Hmi.ViewModels
         /// <summary>타이머 콜백.</summary>
         private void OnTick(object sender, EventArgs e)
         {
-            Step();
+            Sample();
+            BuildAlarms();
+            ApplyMode();
             Refresh();
+
+            Raise("EquipmentState");
+            Raise("HostState");
         }
 
         /// <summary>체인 카드·게이지·트렌드 채널의 구조를 만든다.</summary>
@@ -506,36 +563,117 @@ namespace Esam.Hmi.ViewModels
             }
         }
 
-        /// <summary>시뮬레이터를 한 스텝 진행시킨다.</summary>
-        private void Step()
+        /// <summary>
+        /// 런타임에서 현재 값을 한 표본 끌어와 이력에 넣는다.
+        /// </summary>
+        /// <remarks>
+        /// 런타임이 없으면 아무것도 하지 않는다. 디자인타임에는 값이 멈춰 있는 것이
+        /// 맞고, 가짜 값을 움직이면 <b>화면이 살아 있는데 통신은 죽은 상태</b>를
+        /// 구분할 수 없게 된다. 실장비에서 가장 위험한 오판이다.
+        /// </remarks>
+        private void Sample()
         {
+            if (_runtime == null)
+            {
+                return;
+            }
+
+            SystemSnapshot snapshot = _runtime.Store.Current;
+
             for (int i = 0; i < 5; i++)
             {
-                Advance(_history1[i], Targets[i][0], 0.14, 0.6);
-                Advance(_history2[i], Targets[i][1], 0.12, 2.6);
-                Advance(_history3[i], Targets[i][2], 0.14, 8.0);
+                ChainDefinition chain = ChainAt(i);
 
-                _valve[i] = Clamp(_valve[i] + ((_random.NextDouble() - 0.5) * 1.8), 4.0, 96.0);
-                _fan[i] = Clamp(_fan[i] + ((_random.NextDouble() - 0.5) * 44.0), 600.0, 2900.0);
-                _fanTemp[i] = Clamp(_fanTemp[i] + ((_random.NextDouble() - 0.5) * 0.4), 30.0, 52.0);
+                Push(_history1[i], ReadPressure(snapshot, Sensor1IdFor(i)));
+                Push(_history2[i], ReadPressure(snapshot, chain == null ? null : chain.Sensor2Id));
+                Push(_history3[i], ReadPressure(snapshot, chain == null ? null : chain.Sensor3Id));
+
+                ValveState valve = chain == null ? null : snapshot.FindValve(chain.ValveId);
+                FanState fan = chain == null ? null : snapshot.FindFan(chain.FanId);
+
+                if (valve != null && valve.Quality == Quality.Good)
+                {
+                    _valve[i] = valve.PositionPercent;
+                }
+
+                if (fan != null && fan.Quality == Quality.Good)
+                {
+                    _fan[i] = fan.Rpm;
+                }
+
+                double? temp = snapshot.Auxiliary == null
+                    ? null
+                    : (i < snapshot.Auxiliary.FanTemperatures.Count
+                        ? snapshot.Auxiliary.FanTemperatures[i]
+                        : null);
+
+                if (temp.HasValue)
+                {
+                    _fanTemp[i] = temp.Value;
+                }
             }
+        }
+
+        /// <summary>지정 센서의 압력을 읽는다. 읽을 수 없으면 null.</summary>
+        /// <param name="snapshot">스냅샷.</param>
+        /// <param name="sensorId">센서 디바이스 ID.</param>
+        /// <returns>압력 [Pa]. 품질이 나쁘면 null.</returns>
+        /// <remarks>
+        /// <b>품질이 나쁜 값을 그래프에 그리지 않는다.</b> 통신이 끊긴 센서의 마지막 값을
+        /// 계속 이어 그리면 선이 평평하게 유지되어 정상으로 보인다.
+        /// 값을 넣지 않으면 이력이 멈추고, 그 멈춤 자체가 신호가 된다.
+        /// </remarks>
+        private static double? ReadPressure(SystemSnapshot snapshot, string sensorId)
+        {
+            if (snapshot == null || string.IsNullOrEmpty(sensorId))
+            {
+                return null;
+            }
+
+            PressureReading reading = snapshot.FindPressure(sensorId);
+
+            if (reading == null || reading.Quality != Quality.Good)
+            {
+                return null;
+            }
+
+            return reading.Pa;
         }
 
         /// <summary>이력 배열을 한 칸 밀고 새 표본을 넣는다.</summary>
         /// <param name="history">이력 배열.</param>
-        /// <param name="target">수렴 목표.</param>
-        /// <param name="gain">수렴 계수.</param>
-        /// <param name="noise">노이즈 진폭.</param>
-        private void Advance(double[] history, double target, double gain, double noise)
+        /// <param name="value">새 표본. null 이면 직전 값을 유지한다.</param>
+        private static void Push(double[] history, double? value)
         {
-            double last = history[history.Length - 1];
-
             // 링버퍼 대신 시프트를 쓰는 이유: 120칸 × 5체인이면 시프트 비용이 무시할 수준이고,
             // 트렌드 컨트롤이 인덱스 순서를 그대로 시간순으로 해석할 수 있어 코드가 단순해진다.
+            double last = history[history.Length - 1];
             Array.Copy(history, 1, history, 0, history.Length - 1);
+            history[history.Length - 1] = value ?? last;
+        }
 
-            history[history.Length - 1] =
-                last + ((target - last) * gain) + ((_random.NextDouble() - 0.5) * noise);
+        /// <summary>인덱스에 해당하는 체인 정의를 반환한다. 없으면 null.</summary>
+        /// <param name="index">체인 인덱스(0~4).</param>
+        /// <returns>체인 정의.</returns>
+        private ChainDefinition ChainAt(int index)
+        {
+            if (_runtime == null || _runtime.Control.Chains == null
+                || index < 0 || index >= _runtime.Control.Chains.Count)
+            {
+                return null;
+            }
+
+            return _runtime.Control.Chains[index];
+        }
+
+        /// <summary>센서 1 은 3곳에만 설치되므로 인덱스를 그대로 쓸 수 없다.</summary>
+        /// <param name="index">체인 인덱스(0~4).</param>
+        /// <returns>센서 1 디바이스 ID.</returns>
+        private static string Sensor1IdFor(int index)
+        {
+            // S1-1(EC) · S1-2(SL) · S1-3(SR). 통로 4·5 는 대응 센서가 없어
+            // 가장 가까운 것을 재사용한다. 실제 판정은 ControlConfig.Sensor1Reference 가 정한다.
+            return "S1-" + ((index % 3) + 1).ToString(CultureInfo.InvariantCulture);
         }
 
         /// <summary>모드에 따른 목표값·대역·축 범위를 적용한다.</summary>
@@ -550,29 +688,30 @@ namespace Esam.Hmi.ViewModels
             switch (_mode)
             {
                 case DashboardMode.Sensor1:
-                    setpoint = 6.0;
-                    band = 2.0;
                     decimals = 1;
                     label = "Sensor 1 (EFEM 내부 차압)";
                     sensorLabel = "센서 1 (PV)";
                     break;
 
                 case DashboardMode.Sensor3:
-                    setpoint = -200.0;
-                    band = 100.0;
                     decimals = 0;
                     label = "Sensor 3 (배기 차압)";
                     sensorLabel = "센서 3 (PV)";
                     break;
 
                 default:
-                    setpoint = -10.0;
-                    band = 30.0;
                     decimals = 1;
                     label = "Sensor 2 (체인 차압)";
                     sensorLabel = "센서 2 (PV)";
                     break;
             }
+
+            // ★ 목표값과 대역은 설정에서 가져온다.
+            //
+            // 종전에는 여기 숫자를 적어 두었다. 그러면 작업자가 Config 화면에서 설정을
+            // 바꿔도 게이지 눈금과 대역 표시는 옛 값으로 남는다. 실제 제어는 새 값으로
+            // 도는데 화면은 아니라서, 대역 안에 있는 값이 대역 밖으로 보인다.
+            ResolveTargets(out setpoint, out band);
 
             Setpoint = setpoint;
             Band = band;
@@ -594,6 +733,90 @@ namespace Esam.Hmi.ViewModels
                 label,
                 HistoryLength * RefreshIntervalMs / 1000,
                 RefreshIntervalMs);
+        }
+
+        /// <summary>
+        /// 현재 모드의 목표값과 대역 폭을 설정에서 가져온다.
+        /// </summary>
+        /// <param name="setpoint">목표값 [Pa](출력).</param>
+        /// <param name="band">대역 폭 [Pa](출력).</param>
+        /// <remarks>
+        /// <para>레시피는 센서별 값을 갖는다. 화면의 축은 하나이므로 대표값이 필요하고,
+        /// 현재 모드의 <b>첫 번째 센서</b>를 대표로 쓴다. 통로마다 설정이 다르면
+        /// 축이 통로별로 달라져야 하는데, 그러면 5개 카드를 나란히 비교할 수 없다.</para>
+        /// <para>대역은 상하한 중 넓은 쪽을 쓴다. 좁은 쪽을 쓰면 반대쪽 이탈이
+        /// 축 밖으로 나가 보이지 않는다.</para>
+        /// <para>런타임이 없으면 디자인타임 표본값을 쓴다.</para>
+        /// </remarks>
+        private void ResolveTargets(out double setpoint, out double band)
+        {
+            SensorMode mode = ToSensorMode(_mode);
+
+            if (_runtime == null)
+            {
+                // 디자인타임 표본. 화면 배치를 확인할 수 있을 정도의 값이면 된다.
+                setpoint = mode == SensorMode.Sensor1 ? 6.0 : (mode == SensorMode.Sensor3 ? -200.0 : -10.0);
+                band = mode == SensorMode.Sensor1 ? 2.0 : (mode == SensorMode.Sensor3 ? 100.0 : 30.0);
+                return;
+            }
+
+            ModeSetting setting = null;
+
+            try
+            {
+                setting = _runtime.Control.GetSetting(RepresentativeSensorId(mode), mode);
+            }
+            catch (InvalidOperationException)
+            {
+                // 해당 모드의 공통 설정이 없는 구성. 표시를 위해 계속 진행한다.
+                // 자동 운전 진입은 ControlEngine 이 별도로 막는다.
+            }
+
+            if (setting == null)
+            {
+                setpoint = 0.0;
+                band = 100.0;
+                return;
+            }
+
+            setpoint = setting.SetpointPa;
+
+            double upper = setting.HighLimitPa - setting.SetpointPa;
+            double lower = setting.SetpointPa - setting.LowLimitPa;
+
+            band = upper > lower ? upper : lower;
+
+            if (band <= 0.0)
+            {
+                // 대역이 0 이면 눈금 계산이 0 으로 나눠진다.
+                band = 1.0;
+            }
+        }
+
+        /// <summary>화면 모드를 도메인 센서 모드로 바꾼다.</summary>
+        /// <param name="mode">화면 모드.</param>
+        /// <returns>센서 모드.</returns>
+        private static SensorMode ToSensorMode(DashboardMode mode)
+        {
+            switch (mode)
+            {
+                case DashboardMode.Sensor1: return SensorMode.Sensor1;
+                case DashboardMode.Sensor3: return SensorMode.Sensor3;
+                default: return SensorMode.Sensor2;
+            }
+        }
+
+        /// <summary>모드의 대표 센서 ID 를 반환한다.</summary>
+        /// <param name="mode">센서 모드.</param>
+        /// <returns>디바이스 ID.</returns>
+        private static string RepresentativeSensorId(SensorMode mode)
+        {
+            switch (mode)
+            {
+                case SensorMode.Sensor1: return "S1-1";
+                case SensorMode.Sensor3: return "S3-1";
+                default: return "S2-1";
+            }
         }
 
         /// <summary>적용 중인 목표값.</summary>
@@ -789,24 +1012,209 @@ namespace Esam.Hmi.ViewModels
         /// <summary>알람 목록을 구성한다.</summary>
         private void BuildAlarms()
         {
+            if (_runtime == null || _runtime.Alarms == null)
+            {
+                BuildDesignTimeAlarms();
+                return;
+            }
+
             ActiveAlarms.Clear();
             TickerAlarms.Clear();
+
+            foreach (ChainCardViewModel card in Chains)
+            {
+                card.SetNoAlarm();
+            }
+
+            int unacknowledged = 0;
+            AlarmSeverity worst = AlarmSeverity.Warning;
+            bool anyActive = false;
+
+            // 활성 알람만 나열한다. 이력은 History 화면(S8)의 몫이다.
+            foreach (AlarmState state in EnumerateActive())
+            {
+                anyActive = true;
+
+                if (!state.IsAcknowledged)
+                {
+                    unacknowledged++;
+                }
+
+                if (state.Rule.Severity > worst)
+                {
+                    worst = state.Rule.Severity;
+                }
+
+                bool critical = state.Rule.Severity >= AlarmSeverity.Alarm;
+
+                AlarmRowViewModel row = new AlarmRowViewModel(
+                    state.Rule.Code,
+                    string.IsNullOrEmpty(state.Rule.MessageKo) ? state.Rule.Name : state.Rule.MessageKo,
+                    state.Rule.Severity.ToString().ToUpperInvariant(),
+                    DescribeSource(state.Rule.Source),
+                    state.RaisedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture),
+                    critical);
+
+                row.IsAcknowledged = state.IsAcknowledged;
+                ActiveAlarms.Add(row);
+
+                // 알람을 해당 체인 카드에 붙인다.
+                // 카드 하단에 표시되지 않으면 어느 통로 문제인지 목록을 뒤져야 한다.
+                int chainIndex = ChainIndexOf(state.Rule.Source);
+
+                if (chainIndex >= 0 && chainIndex < Chains.Count)
+                {
+                    Chains[chainIndex].SetAlarm(state.Rule.Code, row.Name, critical);
+                }
+
+                if (TickerAlarms.Count < 3)
+                {
+                    TickerAlarms.Add(row);
+                }
+            }
+
+            BannerTitle = anyActive
+                ? worst.ToString().ToUpperInvariant() + " " + ActiveAlarms.Count.ToString(CultureInfo.InvariantCulture)
+                : "NORMAL";
+
+            BannerSubtitle = anyActive
+                ? "UNACK " + unacknowledged.ToString(CultureInfo.InvariantCulture)
+                : "NO ALARM";
+
+            bool bad = anyActive && worst >= AlarmSeverity.Alarm;
+
+            BannerBrush = !anyActive ? HmiPalette.Ok : (bad ? HmiPalette.Bad : HmiPalette.Warn);
+            BannerBorderBrush = !anyActive
+                ? HmiPalette.BorderNormal
+                : (bad ? HmiPalette.BorderBad : HmiPalette.BorderNormal);
+
+            Raise("AlarmCount");
+            Raise("AlarmCounterText");
+            Raise("AlarmCounterBrush");
+            Raise("UnacknowledgedCount");
+        }
+
+        /// <summary>활성 알람 상태를 열거한다.</summary>
+        /// <returns>활성 알람 목록.</returns>
+        private IEnumerable<AlarmState> EnumerateActive()
+        {
+            List<AlarmState> found = new List<AlarmState>();
+            AlarmSummary summary = _runtime.Alarms.Summary;
+
+            if (summary == null)
+            {
+                return found;
+            }
+
+            foreach (string code in summary.ActiveCodes)
+            {
+                AlarmState state = _runtime.Alarms.FindState(code);
+
+                if (state != null && state.IsActive)
+                {
+                    found.Add(state);
+                }
+            }
+
+            return found;
+        }
+
+        /// <summary>알람 대상 경로에서 표시용 출처 문자열을 만든다.</summary>
+        /// <param name="source">값 경로.</param>
+        /// <returns>표시 문자열.</returns>
+        private static string DescribeSource(string source)
+        {
+            if (string.IsNullOrEmpty(source))
+            {
+                return "SYSTEM";
+            }
+
+            string deviceId;
+
+            if (SnapshotValueResolver.TryGetDeviceId(source, out deviceId))
+            {
+                return deviceId.ToUpperInvariant();
+            }
+
+            int colon = source.IndexOf(':');
+            return (colon > 0 ? source.Substring(0, colon) : source).ToUpperInvariant();
+        }
+
+        /// <summary>알람 대상이 속한 체인 인덱스를 찾는다. 없으면 -1.</summary>
+        /// <param name="source">값 경로.</param>
+        /// <returns>체인 인덱스(0~4) 또는 -1.</returns>
+        private int ChainIndexOf(string source)
+        {
+            string deviceId;
+
+            if (_runtime == null || !SnapshotValueResolver.TryGetDeviceId(source, out deviceId))
+            {
+                return -1;
+            }
+
+            IList<ChainDefinition> chains = _runtime.Control.Chains;
+
+            if (chains == null)
+            {
+                return -1;
+            }
+
+            for (int i = 0; i < chains.Count; i++)
+            {
+                ChainDefinition chain = chains[i];
+
+                if (Eq(chain.Sensor2Id, deviceId) || Eq(chain.Sensor3Id, deviceId)
+                    || Eq(chain.ValveId, deviceId) || Eq(chain.FanId, deviceId))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        /// <summary>대소문자를 무시하고 비교한다.</summary>
+        /// <param name="a">왼쪽.</param>
+        /// <param name="b">오른쪽.</param>
+        /// <returns>같으면 true.</returns>
+        private static bool Eq(string a, string b)
+        {
+            return !string.IsNullOrEmpty(a) && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// 디자인타임 표본 알람을 만든다. 화면 배치 확인 전용이다.
+        /// </summary>
+        /// <remarks>
+        /// 런타임이 붙으면 절대 호출되지 않는다. 실행 중에 가짜 알람이 보이면
+        /// 작업자가 실재하지 않는 사건을 추적하게 된다.
+        /// </remarks>
+        private void BuildDesignTimeAlarms()
+        {
+            ActiveAlarms.Clear();
+            TickerAlarms.Clear();
+
+            foreach (ChainCardViewModel card in Chains)
+            {
+                card.SetNoAlarm();
+            }
+
+            TrendMarkers.Clear();
 
             if (_showAlarms)
             {
                 ActiveAlarms.Add(new AlarmRowViewModel(
-                    "A06", "Temp sensor (EFEM) High limit — 30.0 °C 초과",
-                    "ALARM", "CHAMBER", "10:42:17", true));
+                    "AL-46", "배기 중앙 전면 압력 상한 초과",
+                    "ALARM", "S2-1", "10:42:17", true));
 
                 ActiveAlarms.Add(new AlarmRowViewModel(
-                    "P09", "차압센서 3-1 Low limit error — 디바운스 5 min",
-                    "ALARM", "CHAIN 2-1", "10:41:55", true));
+                    "AL-37", "비상정지 작동",
+                    "CRITICAL", "PLC", "10:41:55", true));
 
                 ActiveAlarms.Add(new AlarmRowViewModel(
-                    "A03", "FDC communication error — 재연결 시도 중",
-                    "WARN", "HOST", "10:38:02", false));
+                    "DG-04", "배기 음압 저하 — 인터록 도달 전 경고",
+                    "WARNING", "S3-1", "10:38:02", false));
 
-                // 셋 중 하나는 이미 확인된 상태로 두어 UNACK 카운트가 총계와 다름을 보여준다.
                 ActiveAlarms[2].IsAcknowledged = true;
 
                 foreach (AlarmRowViewModel alarm in ActiveAlarms)
@@ -814,27 +1222,8 @@ namespace Esam.Hmi.ViewModels
                     TickerAlarms.Add(alarm);
                 }
 
-                Chains[0].SetAlarm("P09", "차압센서 3-1 Low limit error", true);
-                Chains[3].SetAlarm("A03", "FDC 통신 재연결 시도 중", false);
-
-                TrendMarkers.Clear();
-                TrendMarkers.Add(new TrendMarker
-                {
-                    Code = "A03", Position = 0.68, Stroke = HmiPalette.Warn
-                });
-                TrendMarkers.Add(new TrendMarker
-                {
-                    Code = "P09", Position = 0.86, Stroke = HmiPalette.Bad
-                });
-            }
-            else
-            {
-                foreach (ChainCardViewModel card in Chains)
-                {
-                    card.SetNoAlarm();
-                }
-
-                TrendMarkers.Clear();
+                Chains[0].SetAlarm("AL-46", "배기 중앙 전면 압력 상한 초과", true);
+                Chains[3].SetAlarm("DG-04", "배기 음압 저하", false);
             }
 
             BannerTitle = _showAlarms ? "ALARM 3" : "NORMAL";
@@ -875,6 +1264,13 @@ namespace Esam.Hmi.ViewModels
         /// <summary>전체 알람 확인 처리.</summary>
         private void OnAckAll(object parameter)
         {
+            // ★ 화면 목록만 바꾸면 다음 갱신에 되돌아온다.
+            // 확인 상태는 AlarmService 가 들고 있으므로 그쪽에 반영해야 한다.
+            if (_runtime != null && _runtime.Alarms != null)
+            {
+                _runtime.Alarms.AcknowledgeAll();
+            }
+
             foreach (AlarmRowViewModel alarm in ActiveAlarms)
             {
                 alarm.IsAcknowledged = true;

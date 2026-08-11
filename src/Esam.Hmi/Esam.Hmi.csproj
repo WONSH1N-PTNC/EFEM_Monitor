@@ -34,6 +34,19 @@
     -->
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <!--
+      ★ NuGet 참조 방식을 PackageReference 로 명시한다.
+
+      클래식 csproj 는 기본이 packages.config 다. 그 상태에서 SDK 스타일
+      프로젝트를 ProjectReference 하면 상대의 PackageReference 자산이
+      전이되지 않는다. 빌드는 통과하고 실행 시점에 Newtonsoft.Json 을
+      찾지 못해 FileNotFoundException 으로 죽는다.
+
+      즉 컴파일러가 잡아주지 못하는 종류의 실패다. 아래 PackageReference 로
+      직접 명시해 그 경로를 막는다.
+    -->
+    <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
@@ -50,6 +63,30 @@
     <OutputPath>bin\Release\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      설정 파일을 읽는 계층(Esam.Communication)이 쓰는 것과 같은 버전이어야 한다.
+      다르면 어셈블리 바인딩 리다이렉트에 의존하게 되고, 그것이 어긋나면
+      런타임에만 드러난다.
+    -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Esam.Domain\Esam.Domain.csproj">
+      <Project>{A1000000-0000-4000-8000-000000000001}</Project>
+      <Name>Esam.Domain</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\Esam.Communication\Esam.Communication.csproj">
+      <Project>{A1000000-0000-4000-8000-000000000002}</Project>
+      <Name>Esam.Communication</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\Esam.Services\Esam.Services.csproj">
+      <Project>{A1000000-0000-4000-8000-000000000003}</Project>
+      <Name>Esam.Services</Name>
+    </ProjectReference>
+  </ItemGroup>
 
   <ItemGroup>
     <Reference Include="System" />
@@ -105,6 +142,8 @@
     <Compile Include="Controls\ArcGauge.cs" />
     <Compile Include="Controls\TrendChart.cs" />
     <Compile Include="Infrastructure\ObservableObject.cs" />
+    <Compile Include="Infrastructure\IWriteAccessProvider.cs" />
+    <Compile Include="Infrastructure\HmiHost.cs" />
     <Compile Include="Infrastructure\RelayCommand.cs" />
     <Compile Include="Infrastructure\HmiPalette.cs" />
     <Compile Include="ViewModels\DashboardViewModel.cs" />
@@ -113,6 +152,26 @@
     <Compile Include="ViewModels\AlarmRowViewModel.cs" />
     <Compile Include="ViewModels\ReadoutViewModel.cs" />
     <Compile Include="ViewModels\DesignTimeData.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      배포 설정 파일을 출력 폴더로 복사한다.
+      복사하지 않으면 실행 시 config 폴더를 찾지 못해 기동에 실패한다.
+      링크로 두어 원본 한 벌만 유지한다.
+    -->
+    <None Include="..\..\config\device-map.json">
+      <Link>config\device-map.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\config\recipe.json">
+      <Link>config\recipe.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\config\alarms.json">
+      <Link>config\alarms.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

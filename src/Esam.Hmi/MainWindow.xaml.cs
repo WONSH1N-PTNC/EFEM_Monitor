@@ -1,20 +1,74 @@
 using System.Windows;
+using Esam.Hmi.Infrastructure;
 using Esam.Hmi.ViewModels;
+using Esam.Services;
 
 namespace Esam.Hmi
 {
     /// <summary>ESAM HMI 메인 윈도우.</summary>
     public partial class MainWindow : Window
     {
+        private DashboardViewModel _dashboard;
+
         /// <summary>윈도우를 생성한다.</summary>
         public MainWindow()
         {
             InitializeComponent();
 
-            // 현재는 화면이 하나뿐이므로 여기서 직접 연결한다.
-            // Maintenance / Config / I-O / Data Log 가 추가되면
-            // ShellViewModel 과 네비게이션 서비스로 분리한다(DESIGN.md 9 참조).
-            Dashboard.DataContext = new DashboardViewModel();
+            Loaded += OnLoaded;
+            Closed += OnClosed;
+        }
+
+        /// <summary>창이 표시되면 런타임을 연결하고 갱신을 시작한다.</summary>
+        /// <param name="sender">이벤트 발신자.</param>
+        /// <param name="e">이벤트 인자.</param>
+        /// <remarks>
+        /// <para>생성자가 아니라 <c>Loaded</c> 에서 연결한다. 생성자 시점에는
+        /// <see cref="App.Host"/> 가 아직 없을 수 있고, 그 경우 조용히 디자인타임
+        /// 모드로 떨어져 <b>가짜 값이 도는 화면</b>이 된다.</para>
+        /// <para>현재는 화면이 하나뿐이므로 여기서 직접 연결한다.
+        /// Maintenance / I-O / Data Log 가 추가되면 ShellViewModel 과
+        /// 네비게이션 서비스로 분리한다.</para>
+        /// </remarks>
+        private void OnLoaded(object sender, RoutedEventArgs e)
+        {
+            if (_dashboard != null)
+            {
+                return;
+            }
+
+            App app = Application.Current as App;
+            HmiHost host = app == null ? null : app.Host;
+            EsamRuntime runtime = host == null ? null : host.Runtime;
+
+            _dashboard = new DashboardViewModel(runtime);
+            Dashboard.DataContext = _dashboard;
+
+            if (runtime != null)
+            {
+                // 워커 스레드를 띄워 실제 폴링을 시작한다.
+                // 이 호출이 없으면 스냅샷이 갱신되지 않아 화면이 초기값에 멈춘다.
+                runtime.Start();
+            }
+
+            _dashboard.Start();
+        }
+
+        /// <summary>창이 닫히면 갱신을 멈춘다.</summary>
+        /// <param name="sender">이벤트 발신자.</param>
+        /// <param name="e">이벤트 인자.</param>
+        /// <remarks>
+        /// 런타임 정지는 <see cref="App.OnExit"/> 가 맡는다.
+        /// 창 하나가 닫혔다고 액추에이터를 세우면, 여러 창 구조로 확장했을 때
+        /// 창을 닫는 것만으로 운전이 멈추게 된다.
+        /// </remarks>
+        private void OnClosed(object sender, System.EventArgs e)
+        {
+            if (_dashboard != null)
+            {
+                _dashboard.Stop();
+                _dashboard = null;
+            }
         }
     }
 }
