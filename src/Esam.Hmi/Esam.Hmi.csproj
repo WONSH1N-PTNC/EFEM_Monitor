@@ -116,6 +116,10 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+    <Page Include="Views\RecipeEditorView.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
     <Page Include="Themes\Palette.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
@@ -147,15 +151,22 @@
       <DependentUpon>SystemBannerView.xaml</DependentUpon>
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="Views\RecipeEditorView.xaml.cs">
+      <DependentUpon>RecipeEditorView.xaml</DependentUpon>
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="Controls\ArcGauge.cs" />
     <Compile Include="Controls\TrendChart.cs" />
     <Compile Include="Infrastructure\ObservableObject.cs" />
     <Compile Include="Infrastructure\IWriteAccessProvider.cs" />
     <Compile Include="Infrastructure\HmiHost.cs" />
+    <Compile Include="Infrastructure\InverseBooleanConverter.cs" />
     <Compile Include="Infrastructure\RelayCommand.cs" />
     <Compile Include="Infrastructure\HmiPalette.cs" />
     <Compile Include="ViewModels\DashboardViewModel.cs" />
     <Compile Include="ViewModels\SystemBannerViewModel.cs" />
+    <Compile Include="ViewModels\RecipeEditorViewModel.cs" />
+    <Compile Include="ViewModels\ShellViewModel.cs" />
     <Compile Include="ViewModels\ChainCardViewModel.cs" />
     <Compile Include="ViewModels\GaugeViewModel.cs" />
     <Compile Include="ViewModels\AlarmRowViewModel.cs" />

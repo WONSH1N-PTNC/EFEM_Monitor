@@ -10,8 +10,7 @@ namespace Esam.Hmi
     /// <summary>ESAM HMI 메인 윈도우.</summary>
     public partial class MainWindow : Window
     {
-        private DashboardViewModel _dashboard;
-        private SystemBannerViewModel _banner;
+        private ShellViewModel _shell;
         private DispatcherTimer _bannerTimer;
 
         /// <summary>윈도우를 생성한다.</summary>
@@ -27,16 +26,13 @@ namespace Esam.Hmi
         /// <param name="sender">이벤트 발신자.</param>
         /// <param name="e">이벤트 인자.</param>
         /// <remarks>
-        /// <para>생성자가 아니라 <c>Loaded</c> 에서 연결한다. 생성자 시점에는
+        /// 생성자가 아니라 <c>Loaded</c> 에서 연결한다. 생성자 시점에는
         /// <see cref="App.Host"/> 가 아직 없을 수 있고, 그 경우 조용히 디자인타임
-        /// 모드로 떨어져 <b>가짜 값이 도는 화면</b>이 된다.</para>
-        /// <para>현재는 화면이 하나뿐이므로 여기서 직접 연결한다.
-        /// Maintenance / I-O / Data Log 가 추가되면 ShellViewModel 과
-        /// 네비게이션 서비스로 분리한다.</para>
+        /// 모드로 떨어져 <b>가짜 값이 도는 화면</b>이 된다.
         /// </remarks>
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
-            if (_dashboard != null)
+            if (_shell != null)
             {
                 return;
             }
@@ -45,11 +41,8 @@ namespace Esam.Hmi
             HmiHost host = app == null ? null : app.Host;
             EsamRuntime runtime = host == null ? null : host.Runtime;
 
-            _banner = new SystemBannerViewModel(host);
-            Banner.DataContext = _banner;
-
-            _dashboard = new DashboardViewModel(runtime);
-            Dashboard.DataContext = _dashboard;
+            _shell = new ShellViewModel(host);
+            DataContext = _shell;
 
             if (runtime != null)
             {
@@ -58,7 +51,7 @@ namespace Esam.Hmi
                 runtime.Start();
             }
 
-            _dashboard.Start();
+            _shell.Dashboard.Start();
 
             // 배너는 대시보드보다 느리게 갱신해도 된다.
             // 구성 경고는 초 단위로 바뀌는 값이 아니고, 장애 발생은 1초 안에 보이면 충분하다.
@@ -73,9 +66,9 @@ namespace Esam.Hmi
         /// <param name="e">이벤트 인자.</param>
         private void OnBannerTick(object sender, EventArgs e)
         {
-            if (_banner != null)
+            if (_shell != null)
             {
-                _banner.Refresh();
+                _shell.Banner.Refresh();
             }
         }
 
@@ -96,12 +89,10 @@ namespace Esam.Hmi
                 _bannerTimer = null;
             }
 
-            _banner = null;
-
-            if (_dashboard != null)
+            if (_shell != null)
             {
-                _dashboard.Stop();
-                _dashboard = null;
+                _shell.Dashboard.Stop();
+                _shell = null;
             }
         }
     }

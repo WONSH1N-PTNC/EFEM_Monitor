@@ -1,0 +1,220 @@
+<UserControl x:Class="Esam.Hmi.Views.RecipeEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignWidth="1400" d:DesignHeight="800"
+             Background="{StaticResource BgRootBrush}"
+             FontFamily="{StaticResource UiFont}">
+
+    <UserControl.Resources>
+        <!-- 값 입력 칸. 계측 숫자와 같은 모노스페이스로 맞춰 자리수가 흔들리지 않게 한다. -->
+        <Style x:Key="ValueBoxStyle" TargetType="TextBox">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="CaretBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Background" Value="{StaticResource BgInsetBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="HorizontalContentAlignment" Value="Right" />
+            <Setter Property="Margin" Value="4,0" />
+            <Style.Triggers>
+                <Trigger Property="IsFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ══ 제목 ═══════════════════════════════════════════════════════════ -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,4">
+            <TextBlock Text="RECIPE — 센서별 운전 설정값"
+                       FontSize="18" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}" />
+
+            <TextBlock Margin="0,4,0,0"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Foreground="{StaticResource TextMutedBrush}">
+                <Run Text="상위(GEM)가 ECID 로 읽고 쓰는 값입니다." />
+                <Run Text="{Binding RecipePath, Mode=OneWay}"
+                     FontFamily="{StaticResource MonoFont}" />
+            </TextBlock>
+        </StackPanel>
+
+        <!-- ══ 잠금 안내 ═══════════════════════════════════════════════════════ -->
+        <Border Grid.Row="1"
+                Style="{StaticResource InsetBorderStyle}"
+                Padding="12,8"
+                Margin="0,10,0,0">
+            <Border.Style>
+                <Style TargetType="Border" BasedOn="{StaticResource InsetBorderStyle}">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+
+            <TextBlock Text="{Binding LockNotice}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Foreground="{StaticResource StatusWarnBrush}" />
+        </Border>
+
+        <!-- ══ 표 머리 ═══════════════════════════════════════════════════════ -->
+        <Grid Grid.Row="2" Margin="0,14,0,6">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="90" />
+                <ColumnDefinition Width="170" />
+                <ColumnDefinition Width="140" />
+                <ColumnDefinition Width="140" />
+                <ColumnDefinition Width="140" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="센서" Style="{StaticResource MicroLabelStyle}" />
+            <TextBlock Grid.Column="1" Text="계통" Style="{StaticResource MicroLabelStyle}" />
+            <TextBlock Grid.Column="2" Text="설정값 (Pa)" Style="{StaticResource MicroLabelStyle}"
+                       HorizontalAlignment="Right" Margin="0,0,10,0" />
+            <TextBlock Grid.Column="3" Text="하한 (Pa)" Style="{StaticResource MicroLabelStyle}"
+                       HorizontalAlignment="Right" Margin="0,0,10,0" />
+            <TextBlock Grid.Column="4" Text="상한 (Pa)" Style="{StaticResource MicroLabelStyle}"
+                       HorizontalAlignment="Right" Margin="0,0,10,0" />
+        </Grid>
+
+        <!-- ══ 표 본문 ═══════════════════════════════════════════════════════ -->
+        <Border Grid.Row="3" Style="{StaticResource CardBorderStyle}" Padding="0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding Sensors}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border BorderBrush="{StaticResource BorderSubtleBrush}"
+                                    BorderThickness="0,0,0,1"
+                                    Padding="0,6">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="170" />
+                                        <ColumnDefinition Width="140" />
+                                        <ColumnDefinition Width="140" />
+                                        <ColumnDefinition Width="140" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding DeviceId}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="13" FontWeight="Bold"
+                                               VerticalAlignment="Center"
+                                               Margin="12,0,0,0"
+                                               Foreground="{StaticResource TextPrimaryBrush}" />
+
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Group}"
+                                               FontSize="11"
+                                               VerticalAlignment="Center"
+                                               Foreground="{StaticResource TextMutedBrush}" />
+
+                                    <TextBox Grid.Column="2"
+                                             Style="{StaticResource ValueBoxStyle}"
+                                             IsEnabled="{Binding DataContext.IsLocked,
+                                                 RelativeSource={RelativeSource AncestorType=UserControl},
+                                                 Converter={StaticResource InverseBooleanConverter}}"
+                                             Text="{Binding Setpoint, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <TextBox Grid.Column="3"
+                                             Style="{StaticResource ValueBoxStyle}"
+                                             IsEnabled="{Binding DataContext.IsLocked,
+                                                 RelativeSource={RelativeSource AncestorType=UserControl},
+                                                 Converter={StaticResource InverseBooleanConverter}}"
+                                             Text="{Binding LowLimit, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <TextBox Grid.Column="4"
+                                             Style="{StaticResource ValueBoxStyle}"
+                                             IsEnabled="{Binding DataContext.IsLocked,
+                                                 RelativeSource={RelativeSource AncestorType=UserControl},
+                                                 Converter={StaticResource InverseBooleanConverter}}"
+                                             Text="{Binding HighLimit, UpdateSourceTrigger=PropertyChanged}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <!-- ══ 상태 · 오류 · 버튼 ═════════════════════════════════════════════ -->
+        <Grid Grid.Row="4" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="{Binding StatusText}"
+                           FontSize="12"
+                           TextWrapping="Wrap">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasError}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource StatusBadBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <!--
+                    검증 실패 사유를 전부 보여준다. 하나만 알려 주면
+                    고치고 저장하고를 반복하게 된다.
+                -->
+                <ScrollViewer MaxHeight="96"
+                              Margin="0,6,0,0"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Errors}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}"
+                                           TextWrapping="Wrap"
+                                           FontSize="11"
+                                           Margin="0,1"
+                                           Foreground="{StaticResource TextMutedBrush}" />
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                <Button Content="되돌리기"
+                        Command="{Binding ReloadCommand}"
+                        Style="{StaticResource ConsoleButtonStyle}"
+                        MinWidth="90" Margin="0,0,8,0" />
+
+                <Button Content="저장 · 적용"
+                        Command="{Binding SaveCommand}"
+                        Style="{StaticResource ConsoleButtonStyle}"
+                        MinWidth="120" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</UserControl>
