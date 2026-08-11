@@ -2216,6 +2216,116 @@ namespace Esam.Tests
             Assert.Equal(1, status.Chains[0].ChainId);
         }
 
+        // ── 안전 입력 시뮬레이션 ────────────────────────────────────────────────
+
+        /// <summary>배포 구성과 같은 형태의 PLC 종류 정의를 만든다.</summary>
+        /// <returns>PLC 종류 정의.</returns>
+        private static DeviceTypeDefinition CreatePlcType()
+        {
+            DeviceTypeDefinition plc = new DeviceTypeDefinition();
+            plc.Driver = PointKeys.DriverPlc;
+
+            ReadGroupDefinition digital = new ReadGroupDefinition();
+            digital.Name = "digital";
+            digital.Tier = PollingTier.Fast;
+            digital.FunctionCode = 3;
+            digital.StartAddress = "0x000A";
+            digital.Count = 1;
+
+            digital.Points.Add(new PointDefinition
+            {
+                Key = PointKeys.DiEmo, Type = PointDataType.Bool, Bit = 0, ActiveHigh = true
+            });
+
+            plc.ReadGroups.Add(digital);
+            return plc;
+        }
+
+        /// <summary>PLC 를 포함한 통신 구성을 만든다.</summary>
+        /// <returns>통신 구성.</returns>
+        private static DeviceMap CreateMapWithPlc()
+        {
+            DeviceMap map = CreateMap();
+            map.DeviceTypes["LsXbmPlc"] = CreatePlcType();
+
+            map.Devices.Add(new DeviceInstanceDefinition
+            {
+                Id = "PLC-1", Type = "LsXbmPlc", Port = "CH1", SlaveId = 25
+            });
+
+            return map;
+        }
+
+        [Fact]
+        public void PLC가_구성에_있으면_시뮬레이션이_응답한다()
+        {
+            // ★ 회귀 방지. 시뮬레이션에 PLC 슬레이브가 없어서
+            // 배포 구성으로 기동하면 IL-04 가 즉시 발동해 영구히 SafeStop 에 머물렀다.
+            //
+            // 안전 판정은 옳게 동작했다. 시뮬레이션에 상대가 없었을 뿐이다.
+            // 그 결과 안전 입력 경로를 시뮬레이션에서 한 번도 검증하지 못했다.
+            EsamRuntime runtime = CreateRuntime(null, CreateMapWithPlc());
+
+            Assert.True(runtime.Control.SafetyInputsConfigured);
+
+            PollAll(runtime);
+
+            Assert.Equal(Quality.Good, runtime.Store.Current.Plc.Quality);
+            Assert.False(runtime.Store.Current.Plc.EmoActive);
+
+            // IL-04 는 "PLC 가 있는데 응답하지 않는" 경우에만 발동한다.
+            Assert.DoesNotContain(
+                runtime.Interlock.LastEvaluation.Trips, t => t.RuleId == "IL-04");
+        }
+
+        [Fact]
+        public void EMO를_주입하면_전체_정지한다()
+        {
+            // 시뮬레이션 PLC 가 생기면서 처음으로 검증할 수 있게 된 경로다.
+            // IL-02 가 전 체인을 세우고 상태머신은 SafeStop 으로 간다.
+            EsamRuntime runtime = CreateRuntime(null, CreateMapWithPlc());
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 20);
+            Assert.Equal(SystemPhase.AutoControl, runtime.Engine.StateMachine.Phase);
+
+            SimulatedPlc plc = Transport(runtime, "CH1").FindSlave(25) as SimulatedPlc;
+            Assert.NotNull(plc);
+
+            plc.SetEmo(true);
+            PollAll(runtime);
+
+            Assert.True(runtime.Store.Current.Plc.EmoActive);
+            Assert.Contains(runtime.Interlock.LastEvaluation.Trips, t => t.RuleId == "IL-02");
+            Assert.True(runtime.Interlock.LastEvaluation.RequiresSystemStop);
+            Assert.Equal(SystemPhase.SafeStop, runtime.Engine.StateMachine.Phase);
+        }
+
+        [Fact]
+        public void EMO가_풀려도_자동으로_운전에_복귀하지_않는다()
+        {
+            // 비상정지 원인을 확인하지 않은 채 재가동되면 안 된다.
+            EsamRuntime runtime = CreateRuntime(null, CreateMapWithPlc());
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+            RunLoop(runtime, 20);
+
+            SimulatedPlc plc = Transport(runtime, "CH1").FindSlave(25) as SimulatedPlc;
+            Assert.NotNull(plc);
+
+            plc.SetEmo(true);
+            PollAll(runtime);
+            Assert.Equal(SystemPhase.SafeStop, runtime.Engine.StateMachine.Phase);
+
+            plc.SetEmo(false);
+            PollAll(runtime);
+
+            // SafeStop 이 풀리면 Ready 가 아니라 Fault 로 간다.
+            // 물리 안전장치가 동작한 뒤에는 밸브의 기계적 원점을 신뢰할 수 없다.
+            Assert.Equal(SystemPhase.Fault, runtime.Engine.StateMachine.Phase);
+        }
+
         [Fact]
         public void 주소_미확정_그룹은_폴링에서_제외되고_경고로_보고된다()
         {

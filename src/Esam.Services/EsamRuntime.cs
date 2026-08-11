@@ -753,10 +753,27 @@ namespace Esam.Services
                             device.SlaveId, Plant, device.Id));
                         break;
 
+                    case PointKeys.DriverPlc:
+                        // ★ PLC 는 반드시 응답해야 한다.
+                        //
+                        // device-map 에 PLC 가 있으면 SafetyInputsConfigured 가 참이 되고,
+                        // 그 상태에서 무응답이면 IL-04(안전 입력 신뢰 불가)가 발동해
+                        // 전체 정지에 들어간다. 안전 판정은 옳게 동작하는데
+                        // 시뮬레이션에 상대가 없어서 영구히 SafeStop 에 머문다.
+                        //
+                        // 더 중요한 것은 IL-02(EMO)·IL-04 를 시뮬레이션에서
+                        // 한 번도 시험하지 못한다는 점이다.
+                        transport.AddSlave(
+                            new Esam.Communication.Simulation.SimulatedPlc(device.SlaveId));
+                        break;
+
                     default:
-                        // 시뮬레이션 슬레이브가 없는 장치(PLC·온습도·풍속)는 등록하지 않는다.
+                        // 시뮬레이션 슬레이브가 없는 장치(온습도·풍속)는 등록하지 않는다.
                         // 워커는 무응답을 타임아웃으로 처리하고, 스냅샷은 해당 값을 NoData 로 둔다.
                         // 이는 실제로 그 장치들의 레지스터 명세가 미확보인 현재 상태와 동일하다.
+                        //
+                        // 안전 판정에 쓰이는 장치는 여기 오면 안 된다. 무응답이 곧
+                        // "판정 불가" 이고, 그러면 운전이 시작조차 되지 않는다.
                         AddWarning(ConfigWarning.Advisory(
                             "SIM-01",
                             string.Format(

@@ -363,4 +363,144 @@ namespace Esam.Communication.Simulation
             }
         }
     }
+
+    /// <summary>
+    /// PLC 디지털 입력·온도 슬레이브 시뮬레이션.
+    /// </summary>
+    /// <remarks>
+    /// <para><b>이것이 없으면 시뮬레이션에서 장비가 기동하지 못한다.</b>
+    /// <c>device-map.json</c> 에 PLC 가 있으면 <c>SafetyInputsConfigured</c> 가 참이 되고,
+    /// 그 상태에서 PLC 가 무응답이면 IL-04(안전 입력 신뢰 불가)가 발동해
+    /// 전체 정지에 들어간다. 즉 안전 판정은 옳게 동작하는데 시뮬레이션에
+    /// 상대가 없어서 영구히 SafeStop 에 머문다.</para>
+    /// <para>더 중요한 것은 <b>안전 입력 경로를 시뮬레이션에서 한 번도 검증하지
+    /// 못한다</b>는 점이다. IL-02(EMO)·IL-04 는 이 슬레이브가 있어야 시험할 수 있다.</para>
+    /// <para>레지스터 배치는 <c>device-map.json</c> 의 <c>LsXbmPlc</c> 정의를 따른다.
+    /// 디지털 입력 8점이 0x000A 한 워드에 비트마스크로 들어오고,
+    /// BLDC 온도 5점은 0x0064~, 센서 단선 5점은 0x006E~ 다.</para>
+    /// </remarks>
+    public sealed class SimulatedPlc : SimulatedSlaveBase
+    {
+        /// <summary>디지털 입력 워드 주소.</summary>
+        public const ushort DigitalRegister = 0x000A;
+
+        /// <summary>BLDC 온도 시작 주소(5워드).</summary>
+        public const ushort FanTemperatureRegister = 0x0064;
+
+        /// <summary>온도센서 단선 시작 주소(5워드).</summary>
+        public const ushort TemperatureFaultRegister = 0x006E;
+
+        /// <summary>온도 1 LSB 당 섭씨(잠정 1 ℃/LSB).</summary>
+        public const double CelsiusPerLsb = 1.0;
+
+        private readonly double[] _fanTemperatures = new double[5];
+        private readonly bool[] _fanStop = new bool[5];
+        private readonly bool[] _temperatureFault = new bool[5];
+
+        private bool _emo;
+        private bool _controlBoxFanTop;
+        private bool _controlBoxFanBottom;
+
+        /// <summary>PLC 슬레이브를 생성한다.</summary>
+        /// <param name="slaveId">슬레이브 주소.</param>
+        public SimulatedPlc(byte slaveId)
+            : base(slaveId)
+        {
+            // 정상 운전 상태로 시작한다. 모든 입력이 서 있으면 기동 즉시 정지한다.
+            for (int i = 0; i < 5; i++)
+            {
+                _fanTemperatures[i] = 36.0 + i;
+            }
+
+            MapRead(DigitalRegister, ReadDigital);
+
+            for (int i = 0; i < 5; i++)
+            {
+                int index = i;
+
+                MapRead((ushort)(FanTemperatureRegister + i),
+                    () => ToSignedRegister(_fanTemperatures[index], CelsiusPerLsb));
+
+                MapRead((ushort)(TemperatureFaultRegister + i),
+                    () => (ushort)(_temperatureFault[index] ? 1 : 0));
+            }
+
+            // temperatures 그룹은 0x0064 부터 15워드를 한 번에 읽는다.
+            // 사이 공백(0x0069~0x006D)도 응답해야 트랜잭션이 성립한다.
+            for (ushort a = FanTemperatureRegister + 5; a < TemperatureFaultRegister; a++)
+            {
+                MapRead(a, () => 0);
+            }
+        }
+
+        /// <summary>비상정지 입력을 설정한다.</summary>
+        /// <param name="active">작동 상태이면 true.</param>
+        public void SetEmo(bool active)
+        {
+            _emo = active;
+        }
+
+        /// <summary>송풍팬 정지 입력을 설정한다.</summary>
+        /// <param name="index">팬 번호(0~4).</param>
+        /// <param name="stopped">정지 상태이면 true.</param>
+        public void SetFanStop(int index, bool stopped)
+        {
+            if (index >= 0 && index < _fanStop.Length)
+            {
+                _fanStop[index] = stopped;
+            }
+        }
+
+        /// <summary>제어함 냉각팬 입력을 설정한다.</summary>
+        /// <param name="top">상부 정지 여부.</param>
+        /// <param name="bottom">하부 정지 여부.</param>
+        public void SetControlBoxFan(bool top, bool bottom)
+        {
+            _controlBoxFanTop = top;
+            _controlBoxFanBottom = bottom;
+        }
+
+        /// <summary>BLDC 온도를 설정한다.</summary>
+        /// <param name="index">팬 번호(0~4).</param>
+        /// <param name="celsius">온도 [℃].</param>
+        public void SetFanTemperature(int index, double celsius)
+        {
+            if (index >= 0 && index < _fanTemperatures.Length)
+            {
+                _fanTemperatures[index] = celsius;
+            }
+        }
+
+        /// <summary>디지털 입력 워드를 만든다.</summary>
+        /// <returns>비트마스크.</returns>
+        private ushort ReadDigital()
+        {
+            int word = 0;
+
+            if (_emo)
+            {
+                word |= 1 << 0;
+            }
+
+            for (int i = 0; i < 5; i++)
+            {
+                if (_fanStop[i])
+                {
+                    word |= 1 << (i + 1);
+                }
+            }
+
+            if (_controlBoxFanTop)
+            {
+                word |= 1 << 6;
+            }
+
+            if (_controlBoxFanBottom)
+            {
+                word |= 1 << 7;
+            }
+
+            return (ushort)word;
+        }
+    }
 }
