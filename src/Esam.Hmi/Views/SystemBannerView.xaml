@@ -1,0 +1,179 @@
+<UserControl x:Class="Esam.Hmi.Views.SystemBannerView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignWidth="1600"
+             FontFamily="{StaticResource UiFont}">
+
+    <!--
+        구성 경고와 안전 경로 장애를 화면 최상단에 고정한다.
+
+        아래로 스크롤되거나 탭 안쪽에 숨으면 안 된다. "안전 입력이 배선되지 않았다" 는
+        사실은 운전 중 항상 보여야 하고, 한 번 확인했다고 사라져서도 안 된다.
+        확인은 "인지했다" 는 기록이지 "해결했다" 가 아니다.
+    -->
+    <Border BorderThickness="0,0,0,1"
+            BorderBrush="{StaticResource BorderAlarmBrush}"
+            Padding="14,8">
+
+        <Border.Style>
+            <Style TargetType="Border">
+                <Setter Property="Background" Value="{StaticResource StatusBadSoftBrush}" />
+                <Setter Property="Visibility" Value="Collapsed" />
+
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsVisible}" Value="True">
+                        <Setter Property="Visibility" Value="Visible" />
+                    </DataTrigger>
+
+                    <!-- 참고 경고만 있으면 색을 낮춘다. 전부 빨갛게 두면 진짜 차단 경고가 묻힌다. -->
+                    <MultiDataTrigger>
+                        <MultiDataTrigger.Conditions>
+                            <Condition Binding="{Binding HasBlocking}" Value="False" />
+                            <Condition Binding="{Binding HasStartupError}" Value="False" />
+                        </MultiDataTrigger.Conditions>
+                        <Setter Property="Background" Value="{StaticResource StatusWarnSoftBrush}" />
+                        <Setter Property="BorderBrush" Value="{StaticResource BorderWarnBrush}" />
+                    </MultiDataTrigger>
+                </Style.Triggers>
+            </Style>
+        </Border.Style>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding Title}"
+                               FontSize="14"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource TextPrimaryBrush}" />
+
+                    <TextBlock Text="{Binding Detail}"
+                               Margin="12,0,0,0"
+                               VerticalAlignment="Center"
+                               FontSize="12"
+                               Foreground="{StaticResource TextSecondaryBrush}" />
+                </StackPanel>
+
+                <!-- 기동 실패는 목록이 아니라 본문 하나다. -->
+                <TextBlock Text="{Binding StartupError}"
+                           Margin="0,6,0,0"
+                           TextWrapping="Wrap"
+                           FontFamily="{StaticResource MonoFont}"
+                           FontSize="11"
+                           Foreground="{StaticResource TextSecondaryBrush}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasStartupError}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <!--
+                    경고 목록. 최대 높이를 두어 배너가 화면을 잠식하지 않게 한다.
+                    다만 스크롤을 두어 하나도 감추지는 않는다.
+                -->
+                <ScrollViewer MaxHeight="118"
+                              Margin="0,6,0,0"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Warnings}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,1">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="44" />
+                                        <ColumnDefinition Width="72" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding SeverityText}"
+                                               FontSize="11"
+                                               FontWeight="SemiBold">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsBlocking}" Value="True">
+                                                        <Setter Property="Foreground" Value="{StaticResource StatusBadBrush}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Code}"
+                                               FontFamily="{StaticResource MonoFont}"
+                                               FontSize="11"
+                                               Foreground="{StaticResource TextSecondaryBrush}" />
+
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="{Binding Message}"
+                                                   TextWrapping="Wrap"
+                                                   FontSize="11"
+                                                   Foreground="{StaticResource TextPrimaryBrush}" />
+
+                                        <!-- 조치 안내가 있으면 함께 보여준다. 사유만 알려주고 방법을 안 알려주면 소용이 없다. -->
+                                        <TextBlock Text="{Binding Remedy}"
+                                                   TextWrapping="Wrap"
+                                                   FontSize="10"
+                                                   Foreground="{StaticResource TextMutedBrush}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasRemedy}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Top"
+                        Margin="12,0,0,0">
+
+                <Button Content="경고 확인"
+                        Style="{StaticResource ConsoleButtonStyle}"
+                        Command="{Binding AcknowledgeCommand}"
+                        Padding="14,6"
+                        Margin="0,0,8,0"
+                        MinWidth="96" />
+
+                <!--
+                    안전 경로 장애 해제. 누르면 Ready 가 아니라 Fault 로 간다.
+                    버튼 문구에 그 사실을 담아 "해제하면 바로 운전 가능" 이라는
+                    오해를 막는다.
+                -->
+                <Button Content="장애 해제 (재기동 필요)"
+                        Style="{StaticResource ConsoleButtonStyle}"
+                        Command="{Binding ResetFaultCommand}"
+                        Padding="14,6"
+                        MinWidth="150" />
+            </StackPanel>
+        </Grid>
+    </Border>
+</UserControl>

@@ -1,4 +1,6 @@
+using System;
 using System.Windows;
+using System.Windows.Threading;
 using Esam.Hmi.Infrastructure;
 using Esam.Hmi.ViewModels;
 using Esam.Services;
@@ -9,6 +11,8 @@ namespace Esam.Hmi
     public partial class MainWindow : Window
     {
         private DashboardViewModel _dashboard;
+        private SystemBannerViewModel _banner;
+        private DispatcherTimer _bannerTimer;
 
         /// <summary>윈도우를 생성한다.</summary>
         public MainWindow()
@@ -41,6 +45,9 @@ namespace Esam.Hmi
             HmiHost host = app == null ? null : app.Host;
             EsamRuntime runtime = host == null ? null : host.Runtime;
 
+            _banner = new SystemBannerViewModel(host);
+            Banner.DataContext = _banner;
+
             _dashboard = new DashboardViewModel(runtime);
             Dashboard.DataContext = _dashboard;
 
@@ -52,6 +59,24 @@ namespace Esam.Hmi
             }
 
             _dashboard.Start();
+
+            // 배너는 대시보드보다 느리게 갱신해도 된다.
+            // 구성 경고는 초 단위로 바뀌는 값이 아니고, 장애 발생은 1초 안에 보이면 충분하다.
+            _bannerTimer = new DispatcherTimer(DispatcherPriority.Background);
+            _bannerTimer.Interval = TimeSpan.FromMilliseconds(1000);
+            _bannerTimer.Tick += OnBannerTick;
+            _bannerTimer.Start();
+        }
+
+        /// <summary>배너 갱신 주기.</summary>
+        /// <param name="sender">이벤트 발신자.</param>
+        /// <param name="e">이벤트 인자.</param>
+        private void OnBannerTick(object sender, EventArgs e)
+        {
+            if (_banner != null)
+            {
+                _banner.Refresh();
+            }
         }
 
         /// <summary>창이 닫히면 갱신을 멈춘다.</summary>
@@ -62,8 +87,17 @@ namespace Esam.Hmi
         /// 창 하나가 닫혔다고 액추에이터를 세우면, 여러 창 구조로 확장했을 때
         /// 창을 닫는 것만으로 운전이 멈추게 된다.
         /// </remarks>
-        private void OnClosed(object sender, System.EventArgs e)
+        private void OnClosed(object sender, EventArgs e)
         {
+            if (_bannerTimer != null)
+            {
+                _bannerTimer.Stop();
+                _bannerTimer.Tick -= OnBannerTick;
+                _bannerTimer = null;
+            }
+
+            _banner = null;
+
             if (_dashboard != null)
             {
                 _dashboard.Stop();
