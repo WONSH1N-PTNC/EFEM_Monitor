@@ -551,8 +551,22 @@
                                Style="{StaticResource MicroLabelStyle}"
                                Foreground="{StaticResource TextSecondaryBrush}"
                                Margin="0,4,0,8" />
-                    <ItemsControl ItemsSource="{Binding ActiveAlarms}"
-                                  ItemTemplate="{StaticResource ActiveAlarmTemplate}" />
+
+                    <!--
+                        알람 목록만 따로 스크롤한다.
+
+                        바깥 ScrollViewer 하나로 묶으면 알람이 늘어날 때 위쪽 CONTROL·PHASE 가
+                        화면 밖으로 밀려난다. 운전 상태를 보려고 스크롤을 되돌려야 하는데,
+                        정작 알람이 뜬 순간이 그 정보가 가장 필요한 때다.
+
+                        높이 상한을 두되 스크롤을 두어 하나도 감추지 않는다.
+                    -->
+                    <ScrollViewer MaxHeight="320"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding ActiveAlarms}"
+                                      ItemTemplate="{StaticResource ActiveAlarmTemplate}" />
+                    </ScrollViewer>
 
                 </StackPanel>
             </ScrollViewer>
