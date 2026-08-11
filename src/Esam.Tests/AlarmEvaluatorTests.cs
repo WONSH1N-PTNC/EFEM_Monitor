@@ -37,6 +37,132 @@ namespace Esam.Tests
         }
 
         [Fact]
+        public void 레시피의_센서별_상한을_초과하면_알람이_발생한다()
+        {
+            // ★ 규칙에 임계값이 없다. source 의 디바이스 ID 로 레시피를 조회한다.
+            // 값을 규칙에 복사해 두면 Config 화면에서 설정을 바꿨을 때
+            // 알람만 옛 값으로 남아 화면과 알람이 서로 다른 진실을 말한다.
+            AlarmRule rule = new AlarmRule
+            {
+                Code = "AL-46",
+                Name = "EFEM Exhaust Center Front Pressure Sensor High Limit",
+                Severity = AlarmSeverity.Alarm,
+                Source = "device:S2-1.pressurePa",
+                Condition = AlarmConditionType.AboveHighLimit
+            };
+
+            ControlConfig config = Build.Config();
+            config.Recipe = new RecipeDefinition();
+            config.Recipe.Sensors.Add(new SensorSetting("S2-1", -10.0, -40.0, 20.0));
+
+            AlarmEvaluator evaluator = new AlarmEvaluator(new[] { rule });
+
+            Dictionary<string, PressureReading> inBand =
+                new Dictionary<string, PressureReading> { { "S2-1", Build.Pressure("S2-1", 15.0) } };
+
+            Assert.Empty(evaluator.Evaluate(Build.Snapshot(inBand), config, Build.T0));
+
+            Dictionary<string, PressureReading> above =
+                new Dictionary<string, PressureReading> { { "S2-1", Build.Pressure("S2-1", 25.0) } };
+
+            AlarmState state = Assert.Single(evaluator.Evaluate(Build.Snapshot(above), config, Build.T0));
+            Assert.Equal("AL-46", state.Rule.Code);
+            Assert.Contains("상한", state.Detail);
+        }
+
+        [Fact]
+        public void 레시피의_센서별_하한에_미달하면_알람이_발생한다()
+        {
+            AlarmRule rule = new AlarmRule
+            {
+                Code = "AL-47",
+                Name = "EFEM Exhaust Center Front Pressure Sensor Low Limit",
+                Severity = AlarmSeverity.Alarm,
+                Source = "device:S2-1.pressurePa",
+                Condition = AlarmConditionType.BelowLowLimit
+            };
+
+            ControlConfig config = Build.Config();
+            config.Recipe = new RecipeDefinition();
+            config.Recipe.Sensors.Add(new SensorSetting("S2-1", -10.0, -40.0, 20.0));
+
+            AlarmEvaluator evaluator = new AlarmEvaluator(new[] { rule });
+
+            Dictionary<string, PressureReading> inBand =
+                new Dictionary<string, PressureReading> { { "S2-1", Build.Pressure("S2-1", -30.0) } };
+
+            Assert.Empty(evaluator.Evaluate(Build.Snapshot(inBand), config, Build.T0));
+
+            Dictionary<string, PressureReading> below =
+                new Dictionary<string, PressureReading> { { "S2-1", Build.Pressure("S2-1", -50.0) } };
+
+            AlarmState state = Assert.Single(evaluator.Evaluate(Build.Snapshot(below), config, Build.T0));
+            Assert.Equal("AL-47", state.Rule.Code);
+            Assert.Contains("하한", state.Detail);
+        }
+
+        [Fact]
+        public void 센서별_임계값이_각_센서에_따로_적용된다()
+        {
+            // 모드별 공통값이었다면 두 센서가 같은 기준으로 판정된다.
+            // 센서별 값을 쓰면 같은 압력에서도 한쪽만 울린다.
+            AlarmRule[] rules =
+            {
+                new AlarmRule
+                {
+                    Code = "AL-46", Source = "device:S2-1.pressurePa",
+                    Condition = AlarmConditionType.AboveHighLimit
+                },
+                new AlarmRule
+                {
+                    Code = "AL-48", Source = "device:S2-2.pressurePa",
+                    Condition = AlarmConditionType.AboveHighLimit
+                }
+            };
+
+            ControlConfig config = Build.Config();
+            config.Recipe = new RecipeDefinition();
+            config.Recipe.Sensors.Add(new SensorSetting("S2-1", -10.0, -40.0, 0.0));
+            config.Recipe.Sensors.Add(new SensorSetting("S2-2", -10.0, -40.0, 20.0));
+
+            AlarmEvaluator evaluator = new AlarmEvaluator(rules);
+
+            // 둘 다 +10 Pa. S2-1 은 상한 0 을 넘고 S2-2 는 상한 20 안이다.
+            Dictionary<string, PressureReading> pressures = new Dictionary<string, PressureReading>
+            {
+                { "S2-1", Build.Pressure("S2-1", 10.0) },
+                { "S2-2", Build.Pressure("S2-2", 10.0) }
+            };
+
+            AlarmState state = Assert.Single(evaluator.Evaluate(Build.Snapshot(pressures), config, Build.T0));
+            Assert.Equal("AL-46", state.Rule.Code);
+        }
+
+        [Fact]
+        public void 레시피가_없으면_상하한_알람을_판정하지_않는다()
+        {
+            // 폴백 임계값을 쓰면 작업자가 설정한 값과 다른 기준으로 알람이 울린다.
+            // 조용히 틀리는 쪽이 더 위험하므로 판정하지 않는다.
+            // 참조가 끊어진 구성은 로드 단계에서 오류로 막는다.
+            AlarmRule rule = new AlarmRule
+            {
+                Code = "AL-46",
+                Source = "device:S2-1.pressurePa",
+                Condition = AlarmConditionType.AboveHighLimit
+            };
+
+            ControlConfig config = Build.Config();
+            Assert.Null(config.Recipe);
+
+            AlarmEvaluator evaluator = new AlarmEvaluator(new[] { rule });
+
+            Dictionary<string, PressureReading> extreme =
+                new Dictionary<string, PressureReading> { { "S2-1", Build.Pressure("S2-1", 9999.0) } };
+
+            Assert.Empty(evaluator.Evaluate(Build.Snapshot(extreme), config, Build.T0));
+        }
+
+        [Fact]
         public void 상한초과_알람이_발생한다()
         {
             AlarmRule rule = new AlarmRule

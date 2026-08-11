@@ -429,7 +429,7 @@ namespace Esam.Services
             runtime.Store = new DataStore(builder, resolvedClock);
 
             // ── 3. 알람 / 인터록 ─────────────────────────────────────────────────
-            IEnumerable<AlarmRule> alarmRules = ResolveAlarmRules(opts, configWarnings);
+            IEnumerable<AlarmRule> alarmRules = ResolveAlarmRules(opts, control.Recipe, configWarnings);
 
             foreach (ConfigWarning configWarning in configWarnings)
             {
@@ -541,6 +541,7 @@ namespace Esam.Services
         /// 알람 규칙을 확정한다. 직접 지정된 목록이 있으면 그것을, 없으면 파일을 읽는다.
         /// </summary>
         /// <param name="options">런타임 옵션.</param>
+        /// <param name="recipe">운전 파라미터. 임계값 참조 검증에 쓴다. null 허용.</param>
         /// <param name="warnings">구성 경고 목록(출력).</param>
         /// <returns>알람 규칙 목록. 확보하지 못하면 null.</returns>
         /// <remarks>
@@ -549,7 +550,7 @@ namespace Esam.Services
         /// 반드시 경고로 드러낸다. 화면이 조용한 것과 이상이 없는 것은 다르다.
         /// </remarks>
         private static IEnumerable<AlarmRule> ResolveAlarmRules(
-            RuntimeOptions options, IList<ConfigWarning> warnings)
+            RuntimeOptions options, RecipeDefinition recipe, IList<ConfigWarning> warnings)
         {
             if (options.AlarmRules != null)
             {
@@ -566,7 +567,10 @@ namespace Esam.Services
                 return null;
             }
 
-            AlarmLoadResult result = AlarmConfigLoader.LoadFromFile(options.AlarmRulesPath);
+            // 레시피를 함께 넘긴다. 그러지 않으면 AboveHighLimit·BelowLowLimit 의
+            // 참조가 끊어졌는지 확인하지 못하고, 등록됐는데 영원히 울리지 않는
+            // 알람이 생긴다.
+            AlarmLoadResult result = AlarmConfigLoader.LoadFromFile(options.AlarmRulesPath, recipe);
 
             // 개별 규칙 비활성·디바운스 경고는 참고 수준이다.
             foreach (string warning in result.Warnings)

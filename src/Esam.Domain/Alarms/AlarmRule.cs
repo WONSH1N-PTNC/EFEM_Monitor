@@ -49,6 +49,21 @@ namespace Esam.Domain.Alarms
         /// <summary>이 규칙을 사용할지 여부. 임계값 미확정 알람은 false 로 두고 시작한다.</summary>
         public bool Enabled { get; set; }
 
+        /// <summary>
+        /// 레시피와 무관한 자체 임계값을 쓴다고 명시한다.
+        /// </summary>
+        /// <remarks>
+        /// <para>레시피가 임계값을 관리하는 센서를 대상으로 <c>threshold</c> 를 직접 쓰면
+        /// 값이 두 곳에 생기므로 로더가 경고한다. 그런데 <b>의도적으로 그렇게 해야 하는
+        /// 경우</b>가 있다.</para>
+        /// <para>예: DG-04 는 배기 음압이 -100 Pa 를 넘어서면 경고한다. 이 값은 운전
+        /// 설정과 무관한 고정 기준이다. 인터록(0 Pa) 도달 전에 알리는 것이 목적이므로
+        /// 레시피의 하한을 따라 움직이면 안 된다.</para>
+        /// <para>이 플래그가 서 있으면 경고하지 않는다. <b>의도를 데이터에 적어 두는 것</b>이
+        /// 핵심이다. 항상 뜨는 경고는 읽히지 않고, 그러면 진짜 중복도 함께 묻힌다.</para>
+        /// </remarks>
+        public bool IndependentThreshold { get; set; }
+
         /// <summary>사용자에게 표시할 메시지(한국어).</summary>
         public string MessageKo { get; set; }
 
@@ -83,6 +98,24 @@ namespace Esam.Domain.Alarms
             {
                 error = string.Format(CultureInfo.InvariantCulture, "알람 {0}: OutOfBand 조건에는 ReferenceMode 가 필요합니다.", Code);
                 return false;
+            }
+
+            // 레시피 조회 조건은 대상이 특정 디바이스여야 한다.
+            // deviceGroup:·plc:·aux: 는 어느 센서의 한계를 볼지 정할 수 없다.
+            if (Condition == AlarmConditionType.AboveHighLimit
+                || Condition == AlarmConditionType.BelowLowLimit)
+            {
+                string deviceId;
+
+                if (!SnapshotValueResolver.TryGetDeviceId(Source, out deviceId))
+                {
+                    error = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "알람 {0}: {1} 조건의 대상은 device:{{id}}.{{member}} 형식이어야 합니다(현재 '{2}').",
+                        Code, Condition, Source);
+
+                    return false;
+                }
             }
 
             if (DebounceMs < 0.0)

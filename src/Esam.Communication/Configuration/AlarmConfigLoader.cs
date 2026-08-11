@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using Esam.Domain.Alarms;
+using Esam.Domain.Configuration;
 using Newtonsoft.Json;
 
 namespace Esam.Communication.Configuration
@@ -64,10 +65,23 @@ namespace Esam.Communication.Configuration
     /// </remarks>
     public static class AlarmConfigLoader
     {
-        /// <summary>JSON 문자열에서 규칙을 읽는다.</summary>
+        /// <summary>JSON 문자열에서 규칙을 읽는다. 레시피 대조를 생략한다.</summary>
         /// <param name="json">JSON 문자열. 주석을 허용한다.</param>
         /// <returns>로드 결과.</returns>
         public static AlarmLoadResult LoadFromJson(string json)
+        {
+            return LoadFromJson(json, null);
+        }
+
+        /// <summary>JSON 문자열에서 규칙을 읽고 레시피와 대조한다.</summary>
+        /// <param name="json">JSON 문자열. 주석을 허용한다.</param>
+        /// <param name="recipe">운전 파라미터. null 이면 참조 검증을 생략한다.</param>
+        /// <returns>로드 결과.</returns>
+        /// <remarks>
+        /// 레시피를 함께 넘겨야 <c>AboveHighLimit</c>·<c>BelowLowLimit</c> 의 참조가
+        /// 끊어졌는지 알 수 있다. null 이면 그 검증을 건너뛰고 경고로 남긴다.
+        /// </remarks>
+        public static AlarmLoadResult LoadFromJson(string json, RecipeDefinition recipe)
         {
             List<string> errors = new List<string>();
             List<string> warnings = new List<string>();
@@ -97,15 +111,24 @@ namespace Esam.Communication.Configuration
                 return new AlarmLoadResult(null, errors, warnings);
             }
 
-            Validate(document.Rules, errors, warnings);
+            Validate(document.Rules, recipe, errors, warnings);
 
             return new AlarmLoadResult(document.Rules, errors, warnings);
         }
 
-        /// <summary>파일에서 규칙을 읽는다.</summary>
+        /// <summary>파일에서 규칙을 읽는다. 레시피 대조를 생략한다.</summary>
         /// <param name="path">파일 경로.</param>
         /// <returns>로드 결과.</returns>
         public static AlarmLoadResult LoadFromFile(string path)
+        {
+            return LoadFromFile(path, null);
+        }
+
+        /// <summary>파일에서 규칙을 읽고 레시피와 대조한다.</summary>
+        /// <param name="path">파일 경로.</param>
+        /// <param name="recipe">운전 파라미터. null 이면 참조 검증을 생략한다.</param>
+        /// <returns>로드 결과.</returns>
+        public static AlarmLoadResult LoadFromFile(string path, RecipeDefinition recipe)
         {
             List<string> errors = new List<string>();
 
@@ -117,7 +140,7 @@ namespace Esam.Communication.Configuration
 
             try
             {
-                return LoadFromJson(File.ReadAllText(path));
+                return LoadFromJson(File.ReadAllText(path), recipe);
             }
             catch (IOException ex)
             {
@@ -133,11 +156,16 @@ namespace Esam.Communication.Configuration
 
         /// <summary>규칙 목록을 검증한다.</summary>
         /// <param name="rules">규칙 목록.</param>
+        /// <param name="recipe">운전 파라미터. null 이면 참조 검증을 생략한다.</param>
         /// <param name="errors">오류 목록(출력).</param>
         /// <param name="warnings">경고 목록(출력).</param>
         private static void Validate(
-            IList<AlarmRule> rules, IList<string> errors, IList<string> warnings)
+            IList<AlarmRule> rules,
+            RecipeDefinition recipe,
+            IList<string> errors,
+            IList<string> warnings)
         {
+            bool anyRecipeCondition = false;
             HashSet<string> codes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             int enabledCount = 0;
 
@@ -182,11 +210,80 @@ namespace Esam.Communication.Configuration
                         "알람 {0}: 디바운스 {1:F0} ms 는 폴링 주기(250 ms)보다 짧아 효과가 없습니다.",
                         rule.Code, rule.DebounceMs));
                 }
+
+                // ── 경로 검증: 해석할 수 없는 경로는 영원히 울리지 않는다 ──────
+                // "값이 없다" 와 "경로를 모른다" 는 해석기 반환값으로 구분되지 않으므로
+                // 여기서 형식을 확인해야 한다. 오타 하나로 안전 통보가 사라진다.
+                //
+                // 비활성 규칙은 검사하지 않는다. 소스가 아직 없어서 비활성인 것들이며
+                // (AL-01 SECS/GEM, AL-66 PC 온도) 그 사실은 별도 경고로 이미 드러난다.
+                if (rule.Enabled && !SnapshotValueResolver.IsSupportedPath(rule.Source))
+                {
+                    errors.Add(Format(
+                        "알람 {0}: 판정 대상 '{1}' 을 해석할 수 없습니다. "
+                        + "이 알람은 등록되지만 영원히 발생하지 않습니다.",
+                        rule.Code, rule.Source));
+                }
+
+                bool usesRecipe = rule.Condition == AlarmConditionType.AboveHighLimit
+                                  || rule.Condition == AlarmConditionType.BelowLowLimit;
+
+                if (usesRecipe)
+                {
+                    anyRecipeCondition = true;
+                }
+
+                // ── 검증 4: 레시피 참조가 살아 있는가 ───────────────────────────
+                // 끊어지면 알람이 등록됐는데 영원히 울리지 않는다.
+                // 화면의 알람 목록에는 정상으로 보이므로 아무도 모른다.
+                if (usesRecipe && recipe != null)
+                {
+                    string deviceId;
+
+                    if (SnapshotValueResolver.TryGetDeviceId(rule.Source, out deviceId)
+                        && recipe.Find(deviceId) == null)
+                    {
+                        errors.Add(Format(
+                            "알람 {0}: 대상 센서 {1} 가 레시피에 없습니다. "
+                            + "임계값을 가져올 수 없어 이 알람은 영원히 발생하지 않습니다.",
+                            rule.Code, deviceId));
+                    }
+                }
+
+                // ── 검증 5: 임계값이 두 곳에 있는가 ─────────────────────────────
+                // 레시피가 관리하는 센서인데 규칙이 직접 threshold 를 쓰면
+                // 어느 쪽이 적용되는지 알 수 없다. 예외적 필요가 있을 수 있어
+                // 막지는 않고 드러낸다.
+                if (recipe != null && !usesRecipe && !rule.IndependentThreshold
+                    && (rule.Condition == AlarmConditionType.GreaterThan
+                        || rule.Condition == AlarmConditionType.LessThan))
+                {
+                    string deviceId;
+
+                    if (SnapshotValueResolver.TryGetDeviceId(rule.Source, out deviceId)
+                        && recipe.Find(deviceId) != null)
+                    {
+                        warnings.Add(Format(
+                            "알람 {0}: 센서 {1} 은 레시피가 임계값을 관리하는데 "
+                            + "규칙이 threshold({2:F2})를 직접 씁니다. 값이 두 곳에 생깁니다. "
+                            + "의도한 것이면 independentThreshold 를 true 로 두십시오.",
+                            rule.Code, deviceId, rule.Threshold));
+                    }
+                }
             }
 
             if (enabledCount == 0)
             {
                 errors.Add("활성 상태인 알람 규칙이 하나도 없습니다.");
+            }
+
+            // 레시피 없이 로드하면 검증 4·5 를 수행하지 못한다.
+            // 조용히 넘어가면 참조가 끊어진 규칙을 검증했다고 착각한다.
+            if (anyRecipeCondition && recipe == null)
+            {
+                warnings.Add(
+                    "레시피 없이 알람 설정을 로드했습니다. "
+                    + "임계값을 레시피에서 가져오는 규칙의 참조 검증을 건너뜁니다.");
             }
         }
 

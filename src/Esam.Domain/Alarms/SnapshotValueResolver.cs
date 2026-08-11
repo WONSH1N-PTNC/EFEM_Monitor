@@ -42,7 +42,9 @@ namespace Esam.Domain.Alarms
     ///   <item><description><c>device:{id}.positionPercent</c> — 밸브 개도율</description></item>
     ///   <item><description><c>aux:temperatureEfem | humidityEfem | particle | temperatureControlBox | ffuRpm</c></description></item>
     ///   <item><description><c>aux:airVelocity[0..2]</c> — 풍속 1~3</description></item>
-    ///   <item><description><c>plc:di.emo | di.door | di.mainBreaker | di.ctrlBoxFan | di.fanStop[0..4]</c></description></item>
+    ///   <item><description><c>aux:fanTemperature[0..4]</c> — 송풍팬 1~5 온도</description></item>
+    ///   <item><description><c>plc:di.emo | di.door | di.mainBreaker | di.fanStop[0..4]</c></description></item>
+    ///   <item><description><c>plc:di.ctrlBoxFan | di.ctrlBoxFanTop | di.ctrlBoxFanBottom</c></description></item>
     ///   <item><description><c>deviceGroup:Valve | Fan | Pressure</c> — 그룹 통신/알람 판정</description></item>
     /// </list>
     /// </remarks>
@@ -128,6 +130,18 @@ namespace Esam.Domain.Alarms
             if (Eq(path, "di.ctrlBoxFan"))
             {
                 value = plc.ControlBoxFanAlarm;
+                return true;
+            }
+
+            if (Eq(path, "di.ctrlBoxFanTop"))
+            {
+                value = plc.ControlBoxFanTopAlarm;
+                return true;
+            }
+
+            if (Eq(path, "di.ctrlBoxFanBottom"))
+            {
+                value = plc.ControlBoxFanBottomAlarm;
                 return true;
             }
 
@@ -372,6 +386,124 @@ namespace Esam.Domain.Alarms
         /// <param name="scheme">스킴(출력).</param>
         /// <param name="path">경로(출력).</param>
         /// <returns>분리에 성공하면 true.</returns>
+        /// <summary>
+        /// 이 해석기가 해석할 수 있는 경로 형식인지 판정한다.
+        /// </summary>
+        /// <param name="source">값 경로.</param>
+        /// <returns>해석 가능한 형식이면 true.</returns>
+        /// <remarks>
+        /// <para><b>왜 필요한가.</b> 알람 규칙의 경로에 오타가 있거나 아직 노출되지 않은
+        /// 값을 가리키면 <c>TryGetNumeric</c>·<c>TryGetBoolean</c> 이 조용히 false 를
+        /// 반환한다. 그러면 <b>알람이 등록됐는데 영원히 울리지 않는다.</b>
+        /// 화면의 알람 목록에는 정상으로 보이므로 아무도 모른다.</para>
+        /// <para>"값이 없다"(NoData)와 "경로를 모른다"(오타)를 반환값으로는 구분할 수 없다.
+        /// 그래서 형식 판정을 따로 둔다. 로드 시점에 이것으로 걸러야 한다.</para>
+        /// <para>스키마만 보고 통과시키지 않는다. <c>plc:di.emoo</c> 처럼
+        /// 스키마는 맞고 멤버가 틀린 경우가 실제로 위험하다.</para>
+        /// </remarks>
+        public static bool IsSupportedPath(string source)
+        {
+            string scheme;
+            string path;
+
+            if (!TrySplit(source, out scheme, out path))
+            {
+                return false;
+            }
+
+            if (Eq(scheme, "device"))
+            {
+                int dot = path.LastIndexOf('.');
+
+                // 멤버가 없는 형식(device:V-1)은 CommFail·CommFailOrAlarmCode 가 쓴다.
+                // 디바이스 전체를 가리키므로 유효하다.
+                if (dot <= 0)
+                {
+                    return path.Length > 0;
+                }
+
+                string member = path.Substring(dot + 1);
+
+                // 수치 조회가 지원하는 멤버만 허용한다.
+                // alarmCode 는 값이 아니라 CommFailOrAlarmCode 판정에 쓰이므로 함께 허용한다.
+                return Eq(member, "pressurePa") || Eq(member, "rpm")
+                       || Eq(member, "positionPercent") || Eq(member, "positionPulse")
+                       || Eq(member, "alarmCode");
+            }
+
+            if (Eq(scheme, "deviceGroup"))
+            {
+                return Eq(path, "Valve") || Eq(path, "ThrottleValve")
+                       || Eq(path, "Fan") || Eq(path, "BlowerFan")
+                       || Eq(path, "Pressure") || Eq(path, "WTDM550");
+            }
+
+            if (Eq(scheme, "plc"))
+            {
+                int index;
+
+                return Eq(path, "di.emo") || Eq(path, "di.door") || Eq(path, "di.mainBreaker")
+                       || Eq(path, "di.ctrlBoxFan") || Eq(path, "di.ctrlBoxFanTop")
+                       || Eq(path, "di.ctrlBoxFanBottom")
+                       || (TryParseIndexed(path, "di.fanStop", out index) && index >= 0 && index < 5);
+            }
+
+            if (Eq(scheme, "aux"))
+            {
+                int index;
+
+                return Eq(path, "temperatureEfem") || Eq(path, "humidityEfem")
+                       || Eq(path, "particle") || Eq(path, "temperatureControlBox")
+                       || Eq(path, "ffuRpm")
+                       || (TryParseIndexed(path, "airVelocity", out index) && index >= 0 && index < 3)
+                       || (TryParseIndexed(path, "fanTemperature", out index) && index >= 0 && index < 5)
+                       || (TryParseIndexed(path, "mfcFlow", out index) && index >= 0 && index < 2);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// <c>device:{id}.{member}</c> 형식의 경로에서 디바이스 ID 를 떼어낸다.
+        /// </summary>
+        /// <param name="source">값 경로.</param>
+        /// <param name="deviceId">디바이스 ID(출력). 실패 시 null.</param>
+        /// <returns><c>device:</c> 스키마이고 ID 를 얻었으면 true.</returns>
+        /// <remarks>
+        /// <para>레시피에서 센서별 임계값을 조회하려면 경로에서 디바이스 ID 를 알아야 한다.
+        /// 파싱 규칙이 이 클래스에 있으므로 여기서 공개한다. 호출측이 문자열을 다시
+        /// 자르면 규칙이 두 곳에 생기고, 한쪽만 바뀌었을 때 컴파일러가 잡아주지 못한다.</para>
+        /// <para><c>deviceGroup:</c>·<c>plc:</c>·<c>aux:</c> 는 특정 디바이스를 가리키지
+        /// 않으므로 false 를 반환한다.</para>
+        /// </remarks>
+        public static bool TryGetDeviceId(string source, out string deviceId)
+        {
+            deviceId = null;
+
+            string scheme;
+            string path;
+
+            if (!TrySplit(source, out scheme, out path))
+            {
+                return false;
+            }
+
+            if (!string.Equals(scheme, "device", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string id = StripMember(path);
+
+            if (string.IsNullOrEmpty(id))
+            {
+                return false;
+            }
+
+            deviceId = id;
+            return true;
+        }
+
         private static bool TrySplit(string source, out string scheme, out string path)
         {
             scheme = null;

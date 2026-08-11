@@ -41,7 +41,25 @@ namespace Esam.Domain.Alarms
         BitSet = 4,
 
         /// <summary>통신 실패 또는 장치 알람코드가 0이 아니면 알람.</summary>
-        CommFailOrAlarmCode = 5
+        CommFailOrAlarmCode = 5,
+
+        /// <summary>
+        /// 값이 <c>recipe.json</c> 의 해당 센서 상한을 넘으면 알람.
+        /// </summary>
+        /// <remarks>
+        /// <para><b>규칙에 숫자를 두지 않는다.</b> 임계값은 <c>source</c> 의 디바이스 ID 로
+        /// 레시피를 조회해 가져온다. 값을 알람 설정에 복사해 두면 Config 화면에서
+        /// 설정을 바꿨을 때 알람만 옛 값으로 남는다. 화면과 알람이 서로 다른 진실을
+        /// 말하는 상태는 현장에서 원인을 찾기 매우 어렵다.</para>
+        /// <para><see cref="OutOfBand"/> 와 다르다. 이쪽은 센서별 값을 쓰고 상한·하한을
+        /// 별도 알람으로 구분한다. <c>OutOfBand</c> 는 모드별 공통값을 쓰고 하나로 묶는다.
+        /// <c>Alarm LIST</c> 가 High Limit 과 Low Limit 을 나눴으므로 이쪽이 사양에 맞다.</para>
+        /// </remarks>
+        AboveHighLimit = 6,
+
+        /// <summary>값이 <c>recipe.json</c> 의 해당 센서 하한보다 낮으면 알람.</summary>
+        /// <remarks><see cref="AboveHighLimit"/> 의 반대쪽이다.</remarks>
+        BelowLowLimit = 7
     }
 
     /// <summary>알람 해제 정책.</summary>

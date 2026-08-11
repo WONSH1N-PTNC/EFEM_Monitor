@@ -415,6 +415,7 @@ namespace Esam.Services
             // 인터록 IL-04 가 "안전 입력을 신뢰할 수 없음"으로 판정해 전체 정지시켜야 한다.
             Quality safetyQuality = WorstQuality(quality, emo, breaker, door, ctrlBoxFan);
 
+            // 상·하를 따로 넘긴다. 합쳐서만 넘기면 AL-38·AL-39 를 구분할 수 없다.
             return new PlcDigitalState(
                 fanStops,
                 ctrlBoxFanAlarm,
@@ -422,7 +423,9 @@ namespace Esam.Services
                 door != null && door.AsBoolean,
                 breaker != null && breaker.AsBoolean,
                 safetyQuality,
-                latest == DateTime.MinValue ? nowUtc : latest);
+                latest == DateTime.MinValue ? nowUtc : latest,
+                ctrlBoxFanTop != null && ctrlBoxFanTop.AsBoolean,
+                ctrlBoxFanBottom != null && ctrlBoxFanBottom.AsBoolean);
         }
 
         /// <summary>여러 표본 중 가장 나쁜 품질을 고른다.</summary>

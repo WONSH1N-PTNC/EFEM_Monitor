@@ -20,8 +20,19 @@ namespace Esam.Domain.Models
         /// <summary>송풍팬 1~5 정지 알람(D10.0 ~ D10.4). true = 정지 알람 발생.</summary>
         public IReadOnlyList<bool> FanStopAlarms { get; private set; }
 
-        /// <summary>제어박스 냉각팬 정지 알람(D10.5). true = 알람.</summary>
+        /// <summary>제어박스 냉각팬 정지 알람. 상·하 어느 한쪽이라도 정지하면 true.</summary>
         public bool ControlBoxFanAlarm { get; private set; }
+
+        /// <summary>제어박스 상부 냉각팬 정지 여부.</summary>
+        /// <remarks>
+        /// <c>Alarm LIST</c> 는 상부와 하부를 별개 알람(AL-38·AL-39)으로 요구하고
+        /// PLC 도 비트를 둘로 읽는다. 합쳐서만 노출하면 두 알람이 항상 함께 울려
+        /// <b>어느 팬이 멈췄는지 알 수 없다.</b> 제어함을 열어 봐야 한다.
+        /// </remarks>
+        public bool ControlBoxFanTopAlarm { get; private set; }
+
+        /// <summary>제어박스 하부 냉각팬 정지 여부.</summary>
+        public bool ControlBoxFanBottomAlarm { get; private set; }
 
         /// <summary>비상정지(EMO) 작동 여부(D10.6). true = EMO 눌림 → 즉시 SafeStop.</summary>
         public bool EmoActive { get; private set; }
@@ -55,6 +66,8 @@ namespace Esam.Domain.Models
         /// <param name="mainBreakerOff">메인 차단기 OFF 여부.</param>
         /// <param name="quality">통신 품질.</param>
         /// <param name="lastUpdateUtc">마지막 성공 갱신 시각(UTC).</param>
+        /// <param name="controlBoxFanTopAlarm">제어박스 상부 냉각팬 정지 여부.</param>
+        /// <param name="controlBoxFanBottomAlarm">제어박스 하부 냉각팬 정지 여부.</param>
         public PlcDigitalState(
             IList<bool> fanStopAlarms,
             bool controlBoxFanAlarm,
@@ -62,7 +75,9 @@ namespace Esam.Domain.Models
             bool doorOpen,
             bool mainBreakerOff,
             Quality quality,
-            DateTime lastUpdateUtc)
+            DateTime lastUpdateUtc,
+            bool controlBoxFanTopAlarm = false,
+            bool controlBoxFanBottomAlarm = false)
         {
             bool[] copied = new bool[5];
             if (fanStopAlarms != null)
@@ -76,7 +91,13 @@ namespace Esam.Domain.Models
 
             // 외부에서 원본 배열을 수정해도 스냅샷이 변하지 않도록 복사본을 감싼다.
             FanStopAlarms = new ReadOnlyCollection<bool>(copied);
-            ControlBoxFanAlarm = controlBoxFanAlarm;
+            ControlBoxFanTopAlarm = controlBoxFanTopAlarm;
+            ControlBoxFanBottomAlarm = controlBoxFanBottomAlarm;
+
+            // 개별 비트가 서면 합계도 서야 한다. 둘이 어긋나면
+            // "제어함 팬 이상 없음" 인데 개별 알람은 울리는 상태가 된다.
+            ControlBoxFanAlarm =
+                controlBoxFanAlarm || controlBoxFanTopAlarm || controlBoxFanBottomAlarm;
             EmoActive = emoActive;
             DoorOpen = doorOpen;
             MainBreakerOff = mainBreakerOff;

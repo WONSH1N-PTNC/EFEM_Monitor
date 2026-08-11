@@ -1,348 +1,831 @@
 {
-  // ESAM 알람 정의 — DESIGN.md 5.1 (총 31종)
+  // ESAM 알람 규칙
   //
-  // 알람은 코드가 아니라 데이터다. 임계값 변경이나 알람 추가에 재컴파일이 필요하면
-  // 현장에서 손댈 수 없어 결국 아무도 조정하지 않는다.
+  // 코드 체계
+  //   AL-01 ~ AL-66  ESAM_IO List_260806 의 Alarm LIST 시트 No. 와 1:1 대응한다.
+  //                  시트 번호를 그대로 코드로 쓰므로 대조에 변환표가 필요 없고,
+  //                  GEM ALID 매핑도 같은 번호를 쓸 수 있다.
+  //   DG-01 ~        고객 사양에 없는 사내 진단 알람. 조기 경고용이다.
+  //                  상위(GEM)에는 보고하지 않는다.
   //
-  // ── source 경로 규약 (SnapshotValueResolver) ──────────────────────────────
-  //   device:<ID>.pressurePa        차압 [Pa]        품질이 Good 일 때만 값이 나온다
-  //   device:<ID>.rpm               팬 회전수 [RPM]
-  //   device:<ID>.positionPercent   밸브 개도 [%]
-  //   device:<ID>                   통신 실패 판정용 (CommFail)
-  //   deviceGroup:Pressure|Valve|Fan  그룹 단위 통신 실패
-  //   aux:temperatureEfem | humidityEfem | particle | temperatureControlBox | ffuRpm
-  //   aux:airVelocity[0..2] | fanTemperature[0..4] | mfcFlow[0..1]
-  //   plc:di.emo | di.door | di.mainBreaker | di.ctrlBoxFan | di.fanStop[0..4]
+  // 임계값의 출처
+  //   압력 13대  →  recipe.json (ECID 마스터). 규칙에 숫자를 두지 않는다.
+  //   그 외      →  이 파일의 threshold. ECID 대상이 아니라 상위가 관리하지 않는다.
   //
-  // ── condition ─────────────────────────────────────────────────────────────
-  //   GreaterThan / LessThan      threshold 와 비교
-  //   OutOfBand                   referenceMode 의 정상 대역 이탈. threshold 를 쓰지 않는다
-  //   CommFail                    통신 실패
-  //   CommFailOrAlarmCode         통신 실패 또는 장치 알람코드 != 0
-  //   BitSet                      PLC 디지털 입력이 1
-  //
-  // ── severity ──────────────────────────────────────────────────────────────
-  //   Info / Warning / Alarm / Critical
-  //
-  // ── resetPolicy ───────────────────────────────────────────────────────────
-  //   Auto    조건이 해소되면 스스로 풀린다
-  //   Manual  원인 확인 후 사용자가 Reset 해야 풀린다
-  //
-  // ── debounceMs ────────────────────────────────────────────────────────────
-  // 조건이 이 시간 이상 연속으로 성립해야 발생한다. 0 이면 즉시.
-  // 폴링 주기(CH1 Fast 250ms)보다 작은 값은 의미가 없다.
-  // 압력 대역 이탈은 제어가 정정할 시간을 줘야 하므로 Config 의 Time 값과 맞춘다.
-  "schemaVersion": "1.0",
+  // 비활성 규칙은 소스가 없거나 사양이 미확정인 것뿐이다.
+  // 동작하는 줄 알았는데 아니었던 상태를 만들지 않기 위해 사유를 messageKo 에 남긴다.
 
+  "schemaVersion": "2.0",
   "rules": [
-
-    // ══ Pressure P00 — 차압센서 통신 ══════════════════════════════════════════
+    // ── AL-01 : 상위 통신 ─────────────────────────────────────────────────────
+    // SECS/GEM 통신 모듈이 아직 없다(S7). 소스가 없는 규칙을 활성으로 두면
+    // 화면의 알람 목록에는 있는데 영원히 울리지 않는다.
     {
-      // 차압센서가 하나라도 끊기면 그 체인은 제어 불가다.
-      // 개별 센서 알람(P10~P14)과 별개로 그룹 단위 조기 경보를 둔다.
-      "code": "P00",
-      "name": "차압센서 통신 이상",
-      "severity": "Critical",
-      "source": "deviceGroup:Pressure",
+      "code": "AL-01",
+      "name": "FDC Communication Error",
+      "severity": "Alarm",
+      "source": "gem:link",
       "condition": "CommFail",
-      "debounceMs": 1000,
-      "resetPolicy": "Auto",
-      "messageKo": "차압센서 통신이 끊겼습니다. 해당 체인의 자동 제어가 중단됩니다."
-    },
-
-    // ══ Pressure P01~P05 — Sensor 2 대역 이탈 (제어 기준 센서) ════════════════
-    // OutOfBand 는 Config 의 Sensor 2 설정값·대역을 그대로 따른다.
-    // 임계값을 여기에 중복해 적으면 Config 화면에서 바꿨을 때 알람만 옛 값으로 남는다.
-    {
-      "code": "P01", "name": "차압센서 S2-1(EEXCF) 대역 이탈", "severity": "Alarm",
-      "source": "device:S2-1.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor2",
-      "debounceMs": 120000, "resetPolicy": "Auto",
-      "messageKo": "EC 체인 차압이 설정 대역을 벗어났습니다."
-    },
-    {
-      "code": "P02", "name": "차압센서 S2-2(EEXLF) 대역 이탈", "severity": "Alarm",
-      "source": "device:S2-2.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor2",
-      "debounceMs": 120000, "resetPolicy": "Auto",
-      "messageKo": "EL 체인 차압이 설정 대역을 벗어났습니다."
-    },
-    {
-      "code": "P03", "name": "차압센서 S2-3(EEXRF) 대역 이탈", "severity": "Alarm",
-      "source": "device:S2-3.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor2",
-      "debounceMs": 120000, "resetPolicy": "Auto",
-      "messageKo": "ER 체인 차압이 설정 대역을 벗어났습니다."
-    },
-    {
-      "code": "P04", "name": "차압센서 S2-4(EEXSLF) 대역 이탈", "severity": "Alarm",
-      "source": "device:S2-4.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor2",
-      "debounceMs": 120000, "resetPolicy": "Auto",
-      "messageKo": "SL 체인 차압이 설정 대역을 벗어났습니다."
-    },
-    {
-      "code": "P05", "name": "차압센서 S2-5(EEXSRF) 대역 이탈", "severity": "Alarm",
-      "source": "device:S2-5.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor2",
-      "debounceMs": 120000, "resetPolicy": "Auto",
-      "messageKo": "SR 체인 차압이 설정 대역을 벗어났습니다."
-    },
-
-    // ══ Pressure P06~P09 — Sensor 1 대역 이탈 ════════════════════════════════
-    // Sensor 1 은 EC·SL·SR 3곳에만 설치된다(IO List 확인). EL·ER 은 알람 대상이 없다.
-    {
-      "code": "P06", "name": "차압센서 S1-1(EC) 대역 이탈", "severity": "Warning",
-      "source": "device:S1-1.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor1",
-      "debounceMs": 60000, "resetPolicy": "Auto",
-      "messageKo": "EFEM 내부 압력이 설정 대역을 벗어났습니다."
-    },
-    {
-      "code": "P07", "name": "차압센서 S1-2(SL) 대역 이탈", "severity": "Warning",
-      "source": "device:S1-2.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor1",
-      "debounceMs": 60000, "resetPolicy": "Auto",
-      "messageKo": "EFEM 내부 압력이 설정 대역을 벗어났습니다."
-    },
-    {
-      "code": "P08", "name": "차압센서 S1-3(SR) 대역 이탈", "severity": "Warning",
-      "source": "device:S1-3.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor1",
-      "debounceMs": 60000, "resetPolicy": "Auto",
-      "messageKo": "EFEM 내부 압력이 설정 대역을 벗어났습니다."
-    },
-    {
-      // 배기 상실 조기 경보. 인터록 IL-01(0 Pa)보다 먼저 울려야 의미가 있다.
-      // 인터록은 Manual 래치라 걸리면 장비가 멈춘다. 그 전에 알려야 대응할 수 있다.
-      "code": "P09", "name": "배기 음압 저하 경고", "severity": "Warning",
-      "source": "device:S3-1.pressurePa", "condition": "GreaterThan", "threshold": -100.0,
-      "debounceMs": 30000, "resetPolicy": "Auto",
-      "messageKo": "배기 덕트 음압이 -100 Pa 위로 올라왔습니다. 계속 상승하면 인터록이 발동합니다."
-    },
-
-    // ══ Pressure P10~P14 — Sensor 3 대역 이탈 (배기 라인) ════════════════════
-    {
-      "code": "P10", "name": "차압센서 S3-1(EEXCB) 대역 이탈", "severity": "Alarm",
-      "source": "device:S3-1.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor3",
-      "debounceMs": 300000, "resetPolicy": "Auto",
-      "messageKo": "EC 배기 차압이 설정 대역을 벗어났습니다."
-    },
-    {
-      "code": "P11", "name": "차압센서 S3-2(EEXLB) 대역 이탈", "severity": "Alarm",
-      "source": "device:S3-2.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor3",
-      "debounceMs": 300000, "resetPolicy": "Auto",
-      "messageKo": "EL 배기 차압이 설정 대역을 벗어났습니다."
-    },
-    {
-      "code": "P12", "name": "차압센서 S3-3(EEXRB) 대역 이탈", "severity": "Alarm",
-      "source": "device:S3-3.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor3",
-      "debounceMs": 300000, "resetPolicy": "Auto",
-      "messageKo": "ER 배기 차압이 설정 대역을 벗어났습니다."
-    },
-    {
-      "code": "P13", "name": "차압센서 S3-4(EEXSLB) 대역 이탈", "severity": "Alarm",
-      "source": "device:S3-4.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor3",
-      "debounceMs": 300000, "resetPolicy": "Auto",
-      "messageKo": "SL 배기 차압이 설정 대역을 벗어났습니다."
-    },
-    {
-      "code": "P14", "name": "차압센서 S3-5(EEXSRB) 대역 이탈", "severity": "Alarm",
-      "source": "device:S3-5.pressurePa", "condition": "OutOfBand", "referenceMode": "Sensor3",
-      "debounceMs": 300000, "resetPolicy": "Auto",
-      "messageKo": "SR 배기 차압이 설정 대역을 벗어났습니다."
-    },
-
-    // ══ Process A01~A05 — 액추에이터 ═════════════════════════════════════════
-    {
-      // 밸브가 응답하지 않거나 드라이브 알람이 뜨면 제어 수단을 잃는다.
-      "code": "A01",
-      "name": "스로틀밸브 이상",
-      "severity": "Critical",
-      "source": "deviceGroup:Valve",
-      "condition": "CommFailOrAlarmCode",
-      "debounceMs": 1000,
-      "resetPolicy": "Manual",
-      "messageKo": "스로틀밸브 통신 실패 또는 드라이브 알람입니다. 자동 제어를 사용할 수 없습니다."
-    },
-    {
-      "code": "A02",
-      "name": "송풍팬 이상",
-      "severity": "Critical",
-      "source": "deviceGroup:Fan",
-      "condition": "CommFailOrAlarmCode",
-      "debounceMs": 1000,
-      "resetPolicy": "Manual",
-      "messageKo": "송풍팬 통신 실패 또는 드라이브 알람입니다."
-    },
-    {
-      // 밸브가 90도까지 열렸는데도 대역에 못 들어오면 배기 능력이 부족하다.
-      // 제어 여력 소진을 조기에 알리는 항목이다.
-      "code": "A03",
-      "name": "스로틀밸브 개도 포화",
-      "severity": "Warning",
-      "source": "device:V-1.positionPercent",
-      "condition": "GreaterThan",
-      "threshold": 98.0,
-      "debounceMs": 60000,
-      "resetPolicy": "Auto",
-      "messageKo": "EC 밸브가 완전 개방 상태로 유지되고 있습니다. 배기 능력을 확인하십시오."
-    },
-    {
-      "code": "A04",
-      "name": "송풍팬 회전수 상한 도달",
-      "severity": "Warning",
-      "source": "device:F-1.rpm",
-      "condition": "GreaterThan",
-      "threshold": 3900.0,
-      "debounceMs": 60000,
-      "resetPolicy": "Auto",
-      "messageKo": "EC 송풍팬이 최대 회전수 부근에서 운전 중입니다. 제어 여력이 거의 없습니다."
-    },
-    {
-      "code": "A05",
-      "name": "FFU 이상",
-      "severity": "Warning",
-      "source": "aux:ffuRpm",
-      "condition": "LessThan",
-      "threshold": 100.0,
       "debounceMs": 10000,
       "resetPolicy": "Auto",
       "enabled": false,
-      "messageKo": "FFU 회전수가 하한 미만입니다. (사양 미확보 — 기본 비활성)"
+      "messageKo": "상위(FDC) 통신 이상 — SECS/GEM 모듈 미구현(S7)"
     },
 
-    // ══ Process A06~A08 — PLC 디지털 입력 ════════════════════════════════════
+    // ── AL-02 ~ AL-16 : 스로틀밸브 5대 × 3종 ──────────────────────────────────
+    // 모터 이상은 알람코드(0x2203), 통신 이상은 응답 없음으로 판정한다.
+    // 홈센서 이상은 알람코드의 어느 비트인지 미확정이라 비활성이다.
     {
-      // 인터록 IL-02 와 짝을 이룬다. 인터록은 정지시키고, 알람은 이력에 남긴다.
-      "code": "A06",
-      "name": "비상정지(EMO) 작동",
+      "code": "AL-02",
+      "name": "EFEM Center Throttle Valve Motor Error",
+      "severity": "Critical",
+      "source": "device:V-1.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "messageKo": "EFEM 중앙 스로틀밸브 모터 이상 — 알람코드 확인"
+    },
+    {
+      "code": "AL-03",
+      "name": "EFEM Center Throttle Valve Home Sensor Error",
+      "severity": "Critical",
+      "source": "device:V-1.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "enabled": false,
+      "messageKo": "EFEM 중앙 스로틀밸브 홈센서 이상 — 알람코드 0x2203 비트 정의 미확정"
+    },
+    {
+      "code": "AL-04",
+      "name": "EFEM Center Throttle Valve Driver Communication Error",
+      "severity": "Critical",
+      "source": "device:V-1",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 중앙 스로틀밸브 드라이버 통신 이상"
+    },
+    {
+      "code": "AL-05",
+      "name": "EFEM Center Left Throttle Valve Motor Error",
+      "severity": "Critical",
+      "source": "device:V-2.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "messageKo": "EFEM 좌측 스로틀밸브 모터 이상 — 알람코드 확인"
+    },
+    {
+      "code": "AL-06",
+      "name": "EFEM Center Left Throttle Valve Home Sensor Error",
+      "severity": "Critical",
+      "source": "device:V-2.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "enabled": false,
+      "messageKo": "EFEM 좌측 스로틀밸브 홈센서 이상 — 알람코드 0x2203 비트 정의 미확정"
+    },
+    {
+      "code": "AL-07",
+      "name": "EFEM Center Left Throttle Valve Driver Communication Error",
+      "severity": "Critical",
+      "source": "device:V-2",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 좌측 스로틀밸브 드라이버 통신 이상"
+    },
+    {
+      "code": "AL-08",
+      "name": "EFEM Center Right Throttle Valve Motor Error",
+      "severity": "Critical",
+      "source": "device:V-3.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "messageKo": "EFEM 우측 스로틀밸브 모터 이상 — 알람코드 확인"
+    },
+    {
+      "code": "AL-09",
+      "name": "EFEM Center Right Throttle Valve Home Sensor Error",
+      "severity": "Critical",
+      "source": "device:V-3.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "enabled": false,
+      "messageKo": "EFEM 우측 스로틀밸브 홈센서 이상 — 알람코드 0x2203 비트 정의 미확정"
+    },
+    {
+      "code": "AL-10",
+      "name": "EFEM Center Right Throttle Valve Driver Communication Error",
+      "severity": "Critical",
+      "source": "device:V-3",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 우측 스로틀밸브 드라이버 통신 이상"
+    },
+    {
+      "code": "AL-11",
+      "name": "EFEM Side Storage Left Throttle Valve Motor Error",
+      "severity": "Critical",
+      "source": "device:V-4.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "messageKo": "보관부 좌측 스로틀밸브 모터 이상 — 알람코드 확인"
+    },
+    {
+      "code": "AL-12",
+      "name": "EFEM Side Storage Left Throttle Valve Home Sensor Error",
+      "severity": "Critical",
+      "source": "device:V-4.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "enabled": false,
+      "messageKo": "보관부 좌측 스로틀밸브 홈센서 이상 — 알람코드 0x2203 비트 정의 미확정"
+    },
+    {
+      "code": "AL-13",
+      "name": "EFEM Side Storage Left Throttle Valve Driver Communication Error",
+      "severity": "Critical",
+      "source": "device:V-4",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 좌측 스로틀밸브 드라이버 통신 이상"
+    },
+    {
+      "code": "AL-14",
+      "name": "EFEM Side Storage Right Throttle Valve Motor Error",
+      "severity": "Critical",
+      "source": "device:V-5.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "messageKo": "보관부 우측 스로틀밸브 모터 이상 — 알람코드 확인"
+    },
+    {
+      "code": "AL-15",
+      "name": "EFEM Side Storage Right Throttle Valve Home Sensor Error",
+      "severity": "Critical",
+      "source": "device:V-5.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "enabled": false,
+      "messageKo": "보관부 우측 스로틀밸브 홈센서 이상 — 알람코드 0x2203 비트 정의 미확정"
+    },
+    {
+      "code": "AL-16",
+      "name": "EFEM Side Storage Right Throttle Valve Driver Communication Error",
+      "severity": "Critical",
+      "source": "device:V-5",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 우측 스로틀밸브 드라이버 통신 이상"
+    },
+
+    // ── AL-17 ~ AL-31 : 블로워 5대 × 3종 ──────────────────────────────────────
+    // 모터 온도는 PLC 가 5점(temp.fan.0~4) 읽는다. 임계값은 협의 중이므로
+    // 잠정 80 도로 두었다. ECID 항목이 아니라 알람 설정이 직접 갖는다.
+    {
+      "code": "AL-17",
+      "name": "EFEM Center Blower Motor Error",
+      "severity": "Critical",
+      "source": "device:F-1.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "messageKo": "EFEM 중앙 블로워 모터 이상 — 알람코드 확인"
+    },
+    {
+      "code": "AL-18",
+      "name": "EFEM Center Blower Motor Driver Communication Error",
+      "severity": "Critical",
+      "source": "device:F-1",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 중앙 블로워 드라이버 통신 이상"
+    },
+    {
+      "code": "AL-19",
+      "name": "EFEM Center Blower Motor Temp Error",
+      "severity": "Alarm",
+      "source": "aux:fanTemperature[0]",
+      "condition": "GreaterThan",
+      "threshold": 80.0,
+      "debounceMs": 5000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 중앙 블로워 모터 온도 상승 (잠정 80 도, 협의 중)"
+    },
+    {
+      "code": "AL-20",
+      "name": "EFEM Center Left Blower Motor Error",
+      "severity": "Critical",
+      "source": "device:F-2.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "messageKo": "EFEM 좌측 블로워 모터 이상 — 알람코드 확인"
+    },
+    {
+      "code": "AL-21",
+      "name": "EFEM Center Left Blower Motor Driver Communication Error",
+      "severity": "Critical",
+      "source": "device:F-2",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 좌측 블로워 드라이버 통신 이상"
+    },
+    {
+      "code": "AL-22",
+      "name": "EFEM Center Left Blower Motor Temp Error",
+      "severity": "Alarm",
+      "source": "aux:fanTemperature[1]",
+      "condition": "GreaterThan",
+      "threshold": 80.0,
+      "debounceMs": 5000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 좌측 블로워 모터 온도 상승 (잠정 80 도, 협의 중)"
+    },
+    {
+      "code": "AL-23",
+      "name": "EFEM Center Right Blower Motor Error",
+      "severity": "Critical",
+      "source": "device:F-3.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "messageKo": "EFEM 우측 블로워 모터 이상 — 알람코드 확인"
+    },
+    {
+      "code": "AL-24",
+      "name": "EFEM Center Right Blower Motor Driver Communication Error",
+      "severity": "Critical",
+      "source": "device:F-3",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 우측 블로워 드라이버 통신 이상"
+    },
+    {
+      "code": "AL-25",
+      "name": "EFEM Center Right Blower Motor Temp Error",
+      "severity": "Alarm",
+      "source": "aux:fanTemperature[2]",
+      "condition": "GreaterThan",
+      "threshold": 80.0,
+      "debounceMs": 5000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 우측 블로워 모터 온도 상승 (잠정 80 도, 협의 중)"
+    },
+    {
+      "code": "AL-26",
+      "name": "EFEM Side Storage Left Blower Motor Error",
+      "severity": "Critical",
+      "source": "device:F-4.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "messageKo": "보관부 좌측 블로워 모터 이상 — 알람코드 확인"
+    },
+    {
+      "code": "AL-27",
+      "name": "EFEM Side Storage Left Blower Motor Driver Communication Error",
+      "severity": "Critical",
+      "source": "device:F-4",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 좌측 블로워 드라이버 통신 이상"
+    },
+    {
+      "code": "AL-28",
+      "name": "EFEM Side Storage Left Blower Motor Temp Error",
+      "severity": "Alarm",
+      "source": "aux:fanTemperature[3]",
+      "condition": "GreaterThan",
+      "threshold": 80.0,
+      "debounceMs": 5000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 좌측 블로워 모터 온도 상승 (잠정 80 도, 협의 중)"
+    },
+    {
+      "code": "AL-29",
+      "name": "EFEM Side Storage Right Blower Motor Error",
+      "severity": "Critical",
+      "source": "device:F-5.alarmCode",
+      "condition": "CommFailOrAlarmCode",
+      "debounceMs": 0,
+      "resetPolicy": "Manual",
+      "messageKo": "보관부 우측 블로워 모터 이상 — 알람코드 확인"
+    },
+    {
+      "code": "AL-30",
+      "name": "EFEM Side Storage Right Blower Motor Driver Communication Error",
+      "severity": "Critical",
+      "source": "device:F-5",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 우측 블로워 드라이버 통신 이상"
+    },
+    {
+      "code": "AL-31",
+      "name": "EFEM Side Storage Right Blower Motor Temp Error",
+      "severity": "Alarm",
+      "source": "aux:fanTemperature[4]",
+      "condition": "GreaterThan",
+      "threshold": 80.0,
+      "debounceMs": 5000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 우측 블로워 모터 온도 상승 (잠정 80 도, 협의 중)"
+    },
+
+    // ── AL-32 ~ AL-36 : 블로워 냉각팬 정지 ────────────────────────────────────
+    // PLC 디지털 입력. 극성 미확정이므로 device-map 의 activeHigh 로 조정한다.
+    {
+      "code": "AL-32",
+      "name": "EFEM Center Blower Motor Cooling Fan Stop",
+      "severity": "Alarm",
+      "source": "plc:di.fanStop[0]",
+      "condition": "BitSet",
+      "debounceMs": 3000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 중앙 블로워 냉각팬 정지"
+    },
+    {
+      "code": "AL-33",
+      "name": "EFEM Center Left Blower Motor Cooling Fan Stop",
+      "severity": "Alarm",
+      "source": "plc:di.fanStop[1]",
+      "condition": "BitSet",
+      "debounceMs": 3000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 좌측 블로워 냉각팬 정지"
+    },
+    {
+      "code": "AL-34",
+      "name": "EFEM Center Right Blower Motor Cooling Fan Stop",
+      "severity": "Alarm",
+      "source": "plc:di.fanStop[2]",
+      "condition": "BitSet",
+      "debounceMs": 3000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 우측 블로워 냉각팬 정지"
+    },
+    {
+      "code": "AL-35",
+      "name": "EFEM Side Storage Left Blower Motor Cooling Fan Stop",
+      "severity": "Alarm",
+      "source": "plc:di.fanStop[3]",
+      "condition": "BitSet",
+      "debounceMs": 3000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 좌측 블로워 냉각팬 정지"
+    },
+    {
+      "code": "AL-36",
+      "name": "EFEM Side Storage Right Blower Motor Cooling Fan Stop",
+      "severity": "Alarm",
+      "source": "plc:di.fanStop[4]",
+      "condition": "BitSet",
+      "debounceMs": 3000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 우측 블로워 냉각팬 정지"
+    },
+
+    // ── AL-37 ~ AL-39 : 안전 입력 / 제어함 ────────────────────────────────────
+    // EMO 는 인터록 IL-02 가 액추에이터를 세우고, 이 알람은 기록·통보를 맡는다.
+    // 디바운스 0 인 이유는 비상정지를 지연 없이 남겨야 하기 때문이다.
+    {
+      "code": "AL-37",
+      "name": "Emergency Stop",
       "severity": "Critical",
       "source": "plc:di.emo",
       "condition": "BitSet",
       "debounceMs": 0,
       "resetPolicy": "Manual",
-      "messageKo": "비상정지 버튼이 눌렸습니다. 원인 확인 후 Reset 하십시오."
+      "messageKo": "비상정지 작동"
     },
     {
-      "code": "A07",
-      "name": "컨트롤박스 냉각팬 정지",
+      "code": "AL-38",
+      "name": "Control BOX Fan Top Stop",
       "severity": "Alarm",
-      "source": "plc:di.ctrlBoxFan",
+      "source": "plc:di.ctrlBoxFanTop",
       "condition": "BitSet",
-      "debounceMs": 5000,
+      "debounceMs": 3000,
       "resetPolicy": "Auto",
-      "messageKo": "컨트롤박스 냉각팬(상부 또는 하부)이 정지했습니다."
+      "messageKo": "제어함 상부 팬 정지"
     },
     {
-      "code": "A08",
-      "name": "BLDC 냉각팬 정지",
+      "code": "AL-39",
+      "name": "Control BOX Fan Bottom Stop",
       "severity": "Alarm",
-      "source": "plc:di.fanStop[0]",
+      "source": "plc:di.ctrlBoxFanBottom",
       "condition": "BitSet",
-      "debounceMs": 5000,
+      "debounceMs": 3000,
       "resetPolicy": "Auto",
-      "messageKo": "EC 송풍팬 냉각팬이 정지했습니다."
+      "messageKo": "제어함 하부 팬 정지"
     },
 
-    // ══ Process A09~A12 — 온습도 / 파티클 ════════════════════════════════════
+    // ── AL-40 ~ AL-65 : 압력센서 13대 × 상한/하한 ─────────────────────────────
+    // ★ threshold 가 없다. AboveHighLimit / BelowLowLimit 가 source 의 디바이스 ID 로
+    // recipe.json 을 조회한다. 값을 여기 복사해 두면 Config 화면에서 설정을 바꿨을 때
+    // 알람만 옛 값으로 남아, 화면과 알람이 서로 다른 진실을 말하게 된다.
+    //
+    // 심각도는 계통별로 다르다.
+    //   Sensor1(EFEM 내부) — 청정도 영향. Warning
+    //   Sensor2(배기 전면) — 제어 기준. Alarm
+    //   Sensor3(배기 하부) — 배기 상실과 직결. Alarm (IL-01 이 별도로 정지시킨다)
     {
-      "code": "A09",
-      "name": "EFEM 온도 상한 초과",
+      "code": "AL-40",
+      "name": "EFEM Center Pressure Sensor High Limit",
+      "severity": "Warning",
+      "source": "device:S1-1.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 중앙 압력 상한 초과"
+    },
+    {
+      "code": "AL-41",
+      "name": "EFEM Center Pressure Sensor Low Limit",
+      "severity": "Warning",
+      "source": "device:S1-1.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "EFEM 중앙 압력 하한 미달"
+    },
+    {
+      "code": "AL-42",
+      "name": "EFEM Side Storage Left Pressure Sensor High Limit",
+      "severity": "Warning",
+      "source": "device:S1-2.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 좌측 압력 상한 초과"
+    },
+    {
+      "code": "AL-43",
+      "name": "EFEM Side Storage Left Pressure Sensor Low Limit",
+      "severity": "Warning",
+      "source": "device:S1-2.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 좌측 압력 하한 미달"
+    },
+    {
+      "code": "AL-44",
+      "name": "EFEM Side Storage Right Pressure Sensor High Limit",
+      "severity": "Warning",
+      "source": "device:S1-3.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 우측 압력 상한 초과"
+    },
+    {
+      "code": "AL-45",
+      "name": "EFEM Side Storage Right Pressure Sensor Low Limit",
+      "severity": "Warning",
+      "source": "device:S1-3.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "보관부 우측 압력 하한 미달"
+    },
+    {
+      "code": "AL-46",
+      "name": "EFEM Exhaust Center Front Pressure Sensor High Limit",
+      "severity": "Alarm",
+      "source": "device:S2-1.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 중앙 전면 압력 상한 초과"
+    },
+    {
+      "code": "AL-47",
+      "name": "EFEM Exhaust Center Front Pressure Sensor Low Limit",
+      "severity": "Alarm",
+      "source": "device:S2-1.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 중앙 전면 압력 하한 미달"
+    },
+    {
+      "code": "AL-48",
+      "name": "EFEM Exhaust Left Front Pressure Sensor High Limit",
+      "severity": "Alarm",
+      "source": "device:S2-2.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 좌측 전면 압력 상한 초과"
+    },
+    {
+      "code": "AL-49",
+      "name": "EFEM Exhaust Left Front Pressure Sensor Low Limit",
+      "severity": "Alarm",
+      "source": "device:S2-2.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 좌측 전면 압력 하한 미달"
+    },
+    {
+      "code": "AL-50",
+      "name": "EFEM Exhaust Right Front Pressure Sensor High Limit",
+      "severity": "Alarm",
+      "source": "device:S2-3.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 우측 전면 압력 상한 초과"
+    },
+    {
+      "code": "AL-51",
+      "name": "EFEM Exhaust Right Front Pressure Sensor Low Limit",
+      "severity": "Alarm",
+      "source": "device:S2-3.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 우측 전면 압력 하한 미달"
+    },
+    {
+      "code": "AL-52",
+      "name": "EFEM Exhaust Storage Left Front Pressure Sensor High Limit",
+      "severity": "Alarm",
+      "source": "device:S2-4.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 보관부 좌측 전면 압력 상한 초과"
+    },
+    {
+      "code": "AL-53",
+      "name": "EFEM Exhaust Storage Left Front Pressure Sensor Low Limit",
+      "severity": "Alarm",
+      "source": "device:S2-4.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 보관부 좌측 전면 압력 하한 미달"
+    },
+    {
+      "code": "AL-54",
+      "name": "EFEM Exhaust Storage Right Front Pressure Sensor High Limit",
+      "severity": "Alarm",
+      "source": "device:S2-5.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 보관부 우측 전면 압력 상한 초과"
+    },
+    {
+      "code": "AL-55",
+      "name": "EFEM Exhaust Storage Right Front Pressure Sensor Low Limit",
+      "severity": "Alarm",
+      "source": "device:S2-5.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 120000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 보관부 우측 전면 압력 하한 미달"
+    },
+    {
+      "code": "AL-56",
+      "name": "EFEM Exhaust Center Bottom Pressure Sensor High Limit",
+      "severity": "Alarm",
+      "source": "device:S3-1.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 60000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 중앙 하부 압력 상한 초과"
+    },
+    {
+      "code": "AL-57",
+      "name": "EFEM Exhaust Center Bottom Pressure Sensor Low Limit",
+      "severity": "Alarm",
+      "source": "device:S3-1.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 60000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 중앙 하부 압력 하한 미달"
+    },
+    {
+      "code": "AL-58",
+      "name": "EFEM Exhaust Left Bottom Pressure Sensor High Limit",
+      "severity": "Alarm",
+      "source": "device:S3-2.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 60000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 좌측 하부 압력 상한 초과"
+    },
+    {
+      "code": "AL-59",
+      "name": "EFEM Exhaust Left Bottom Pressure Sensor Low Limit",
+      "severity": "Alarm",
+      "source": "device:S3-2.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 60000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 좌측 하부 압력 하한 미달"
+    },
+    {
+      "code": "AL-60",
+      "name": "EFEM Exhaust Right Bottom Pressure Sensor High Limit",
+      "severity": "Alarm",
+      "source": "device:S3-3.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 60000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 우측 하부 압력 상한 초과"
+    },
+    {
+      "code": "AL-61",
+      "name": "EFEM Exhaust Right Bottom Pressure Sensor Low Limit",
+      "severity": "Alarm",
+      "source": "device:S3-3.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 60000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 우측 하부 압력 하한 미달"
+    },
+    {
+      "code": "AL-62",
+      "name": "EFEM Exhaust Storage Left Bottom Pressure Sensor High Limit",
+      "severity": "Alarm",
+      "source": "device:S3-4.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 60000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 보관부 좌측 하부 압력 상한 초과"
+    },
+    {
+      "code": "AL-63",
+      "name": "EFEM Exhaust Storage Left Bottom Pressure Sensor Low Limit",
+      "severity": "Alarm",
+      "source": "device:S3-4.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 60000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 보관부 좌측 하부 압력 하한 미달"
+    },
+    {
+      "code": "AL-64",
+      "name": "EFEM Exhaust Storage Right Bottom Pressure Sensor High Limit",
+      "severity": "Alarm",
+      "source": "device:S3-5.pressurePa",
+      "condition": "AboveHighLimit",
+      "debounceMs": 60000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 보관부 우측 하부 압력 상한 초과"
+    },
+    {
+      "code": "AL-65",
+      "name": "EFEM Exhaust Storage Right Bottom Pressure Sensor Low Limit",
+      "severity": "Alarm",
+      "source": "device:S3-5.pressurePa",
+      "condition": "BelowLowLimit",
+      "debounceMs": 60000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 보관부 우측 하부 압력 하한 미달"
+    },
+
+    // ── AL-66 : 호스트 PC ─────────────────────────────────────────────────────
+    // PC 내부 온도를 읽을 경로가 없다. WMI 나 별도 센서가 필요하다.
+    {
+      "code": "AL-66",
+      "name": "PC Temp Error",
+      "severity": "Alarm",
+      "source": "host:cpuTemperature",
+      "condition": "GreaterThan",
+      "threshold": 75.0,
+      "debounceMs": 30000,
+      "resetPolicy": "Auto",
+      "enabled": false,
+      "messageKo": "제어 PC 온도 상승 — 온도 취득 경로 미구현"
+    },
+
+    // ══ DG : 사내 진단 알람 ════════════════════════════════════════════════════
+    //
+    // 고객 사양(Alarm LIST 66종)에 없는 항목이다. 66종은 "고장이 났다" 를 알리고,
+    // 이쪽은 "고장 나기 전" 을 알린다. 밸브가 다 열렸는데도 목표에 못 미치는 상태를
+    // 알아야 배기 계통 막힘을 조기에 잡을 수 있다.
+    //
+    // 상위(GEM)에는 보고하지 않는다. gem-map.json 의 ALID 는 AL-** 만 매핑한다.
+
+    {
+      "code": "DG-01",
+      "name": "Pressure Sensor Group Communication Failure",
+      "severity": "Critical",
+      "source": "deviceGroup:Pressure",
+      "condition": "CommFail",
+      "debounceMs": 1000,
+      "resetPolicy": "Auto",
+      "messageKo": "압력센서 통신 실패 — 제어 기준값을 신뢰할 수 없음"
+    },
+    {
+      // 밸브가 전개도인데 목표에 못 미치면 배기 계통에 저항이 생긴 것이다.
+      // 이 시점에 알려야 압력 이탈(AL-46~AL-55)로 번지기 전에 손을 쓸 수 있다.
+      "code": "DG-02",
+      "name": "Throttle Valve Saturated",
+      "severity": "Warning",
+      "source": "device:V-1.positionPercent",
+      "condition": "GreaterThan",
+      "threshold": 98.0,
+      "debounceMs": 30000,
+      "resetPolicy": "Auto",
+      "messageKo": "중앙 스로틀밸브 개도 포화 — 배기 계통 저항 확인"
+    },
+    {
+      // 밸브 포화 후 팬까지 최대면 더 올릴 여지가 없다. 제어 한계 도달이다.
+      "code": "DG-03",
+      "name": "Blower RPM Saturated",
+      "severity": "Warning",
+      "source": "device:F-1.rpm",
+      "condition": "GreaterThan",
+      "threshold": 3900.0,
+      "debounceMs": 30000,
+      "resetPolicy": "Auto",
+      "messageKo": "중앙 블로워 회전수 포화 — 제어 여유 없음"
+    },
+    {
+      // ★ IL-01 은 0 Pa 에서 정지시킨다. 그 전에 알려 주는 것이 이 규칙이다.
+      // -100 Pa 를 넘어서면 배기 음압이 절반 이상 사라진 상태다.
+      "code": "DG-04",
+      "name": "Exhaust Negative Pressure Degraded",
+      "severity": "Warning",
+      "source": "device:S3-1.pressurePa",
+      "condition": "GreaterThan",
+      "threshold": -100.0,
+
+      // ★ 레시피와 무관한 고정 기준이다. 인터록(0 Pa) 도달 전에 알리는 것이 목적이므로
+      // 레시피의 하한을 따라 움직이면 안 된다. 값 중복 경고를 의도적으로 면제한다.
+      "independentThreshold": true,
+      "debounceMs": 10000,
+      "resetPolicy": "Auto",
+      "messageKo": "배기 음압 저하 — 인터록(0 Pa) 도달 전 경고"
+    },
+    {
+      "code": "DG-05",
+      "name": "EFEM Temperature High",
       "severity": "Warning",
       "source": "aux:temperatureEfem",
       "condition": "GreaterThan",
       "threshold": 30.0,
-      "debounceMs": 30000,
+      "debounceMs": 60000,
       "resetPolicy": "Auto",
-      "messageKo": "EFEM 내부 온도가 30도를 넘었습니다."
+      "messageKo": "EFEM 내부 온도 상승"
     },
     {
-      "code": "A10",
-      "name": "습도 상한 초과",
+      "code": "DG-06",
+      "name": "EFEM Humidity Out Of Range High",
       "severity": "Warning",
       "source": "aux:humidityEfem",
       "condition": "GreaterThan",
       "threshold": 60.0,
-      "debounceMs": 30000,
+      "debounceMs": 60000,
       "resetPolicy": "Auto",
-      "messageKo": "EFEM 습도가 60%를 넘었습니다."
+      "messageKo": "EFEM 내부 습도 상한 초과"
     },
     {
-      "code": "A11",
-      "name": "습도 하한 미만",
+      "code": "DG-07",
+      "name": "EFEM Humidity Out Of Range Low",
       "severity": "Warning",
       "source": "aux:humidityEfem",
       "condition": "LessThan",
       "threshold": 30.0,
-      "debounceMs": 30000,
+      "debounceMs": 60000,
       "resetPolicy": "Auto",
-      "messageKo": "EFEM 습도가 30% 미만입니다."
+      "messageKo": "EFEM 내부 습도 하한 미달"
     },
     {
-      "code": "A12",
-      "name": "파티클 농도 상한 초과",
-      "severity": "Alarm",
-      "source": "aux:particle",
-      "condition": "GreaterThan",
-      "threshold": 1000.0,
-      "debounceMs": 10000,
+      // 풍속계 3대. FFU 성능 저하와 필터 막힘을 본다.
+      "code": "DG-08",
+      "name": "Air Velocity Low",
+      "severity": "Warning",
+      "source": "aux:airVelocity[0]",
+      "condition": "LessThan",
+      "threshold": 0.2,
+      "debounceMs": 60000,
       "resetPolicy": "Auto",
-      "enabled": false,
-      "messageKo": "파티클 농도가 상한을 넘었습니다. (프로토콜 미확보 — 기본 비활성)"
-    },
-
-    // ══ Process A13 — 컨트롤박스 온도 ════════════════════════════════════════
-    {
-      "code": "A13",
-      "name": "컨트롤박스 온도 상한 초과",
-      "severity": "Alarm",
-      "source": "aux:temperatureControlBox",
-      "condition": "GreaterThan",
-      "threshold": 45.0,
-      "debounceMs": 30000,
-      "resetPolicy": "Auto",
-      "enabled": false,
-      "messageKo": "컨트롤박스 온도가 45도를 넘었습니다. (TC 채널 미배정 — 기본 비활성)"
-    },
-
-    // ══ Process A14~A16 — 풍속 ═══════════════════════════════════════════════
-    {
-      "code": "A14", "name": "풍속 1(EEXCF) 하한 미만", "severity": "Warning",
-      "source": "aux:airVelocity[0]", "condition": "LessThan", "threshold": 0.3,
-      "debounceMs": 30000, "resetPolicy": "Auto",
-      "messageKo": "EEXCF 풍속이 하한 미만입니다. 기류 순환을 확인하십시오."
-    },
-    {
-      "code": "A15", "name": "풍속 2(EEXSLF) 하한 미만", "severity": "Warning",
-      "source": "aux:airVelocity[1]", "condition": "LessThan", "threshold": 0.3,
-      "debounceMs": 30000, "resetPolicy": "Auto",
-      "messageKo": "EEXSLF 풍속이 하한 미만입니다."
-    },
-    {
-      "code": "A16", "name": "풍속 3(EEXSRF) 하한 미만", "severity": "Warning",
-      "source": "aux:airVelocity[2]", "condition": "LessThan", "threshold": 0.3,
-      "debounceMs": 30000, "resetPolicy": "Auto",
-      "messageKo": "EEXSRF 풍속이 하한 미만입니다."
-    },
-
-    // ══ Process A17 — BLDC 온도 ══════════════════════════════════════════════
-    {
-      "code": "A17",
-      "name": "송풍팬 BLDC 온도 상한 초과",
-      "severity": "Alarm",
-      "source": "aux:fanTemperature[0]",
-      "condition": "GreaterThan",
-      "threshold": 70.0,
-      "debounceMs": 30000,
-      "resetPolicy": "Auto",
-      "messageKo": "EC 송풍팬 BLDC 온도가 70도를 넘었습니다."
-    },
-
-    // ══ Process A18~A19 — MFC (사양 미확보) ══════════════════════════════════
-    {
-      "code": "A18", "name": "MFC 1 유량 이상", "severity": "Warning",
-      "source": "aux:mfcFlow[0]", "condition": "LessThan", "threshold": 1.0,
-      "debounceMs": 10000, "resetPolicy": "Auto", "enabled": false,
-      "messageKo": "MFC 1 유량이 하한 미만입니다. (사양 미확보 — 기본 비활성)"
-    },
-    {
-      "code": "A19", "name": "MFC 2 유량 이상", "severity": "Warning",
-      "source": "aux:mfcFlow[1]", "condition": "LessThan", "threshold": 1.0,
-      "debounceMs": 10000, "resetPolicy": "Auto", "enabled": false,
-      "messageKo": "MFC 2 유량이 하한 미만입니다. (사양 미확보 — 기본 비활성)"
+      "messageKo": "풍속 저하 — FFU 성능 또는 필터 확인"
     }
   ]
 }

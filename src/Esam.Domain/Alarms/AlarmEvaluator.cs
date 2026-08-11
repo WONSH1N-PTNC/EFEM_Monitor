@@ -233,6 +233,12 @@ namespace Esam.Domain.Alarms
                 case AlarmConditionType.OutOfBand:
                     return TestOutOfBand(rule, resolver, config, out value, out detail);
 
+                case AlarmConditionType.AboveHighLimit:
+                    return TestRecipeLimit(rule, resolver, config, true, out value, out detail);
+
+                case AlarmConditionType.BelowLowLimit:
+                    return TestRecipeLimit(rule, resolver, config, false, out value, out detail);
+
                 case AlarmConditionType.BitSet:
                     bool bit;
                     if (!resolver.TryGetBoolean(rule.Source, out bit))
@@ -284,6 +290,71 @@ namespace Esam.Domain.Alarms
         /// <param name="value">판정 값(출력).</param>
         /// <param name="detail">사유 설명(출력).</param>
         /// <returns>대역을 벗어나면 true.</returns>
+        /// <summary>
+        /// 레시피의 센서별 상한 또는 하한과 비교한다.
+        /// </summary>
+        /// <param name="rule">알람 규칙.</param>
+        /// <param name="resolver">값 해석기.</param>
+        /// <param name="config">제어 설정. 레시피를 들고 있다.</param>
+        /// <param name="high">true 면 상한 초과, false 면 하한 미달을 본다.</param>
+        /// <param name="value">판정에 쓴 값(출력).</param>
+        /// <param name="detail">사람이 읽을 설명(출력).</param>
+        /// <returns>알람 조건이 성립하면 true.</returns>
+        /// <remarks>
+        /// <para><b>레시피가 없거나 해당 센서가 없으면 판정하지 않는다.</b>
+        /// 여기서 폴백 임계값을 쓰면 작업자가 설정한 값과 다른 기준으로 알람이 울린다.
+        /// 그쪽이 조용히 틀리는 쪽이라 더 위험하다.</para>
+        /// <para>참조가 끊어진 구성은 <b>로드 단계에서 오류로 막는다</b>(검증 4).
+        /// 여기까지 온 것은 로더를 우회해 규칙을 직접 주입한 경우뿐이다.</para>
+        /// </remarks>
+        private static bool TestRecipeLimit(
+            AlarmRule rule,
+            IAlarmValueResolver resolver,
+            ControlConfig config,
+            bool high,
+            out double value,
+            out string detail)
+        {
+            value = 0.0;
+            detail = null;
+
+            if (config == null || config.Recipe == null)
+            {
+                return false;
+            }
+
+            string deviceId;
+            if (!SnapshotValueResolver.TryGetDeviceId(rule.Source, out deviceId))
+            {
+                return false;
+            }
+
+            SensorSetting sensor = config.Recipe.Find(deviceId);
+            if (sensor == null)
+            {
+                return false;
+            }
+
+            if (!resolver.TryGetNumeric(rule.Source, out value))
+            {
+                return false;
+            }
+
+            double limit = high ? sensor.HighLimitPa : sensor.LowLimitPa;
+            bool met = high ? value > limit : value < limit;
+
+            if (!met)
+            {
+                return false;
+            }
+
+            detail = Format(
+                "{0} = {1:F2} Pa 가 {2}({3:F2} Pa)을 벗어남 (설정값 {4:F2} Pa)",
+                rule.Source, value, high ? "상한" : "하한", limit, sensor.SetpointPa);
+
+            return true;
+        }
+
         private static bool TestOutOfBand(
             AlarmRule rule,
             IAlarmValueResolver resolver,
