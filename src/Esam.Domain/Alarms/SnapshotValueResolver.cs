@@ -381,11 +381,6 @@ namespace Esam.Domain.Alarms
             return false;
         }
 
-        /// <summary>"scheme:path" 형식을 분리한다.</summary>
-        /// <param name="source">원본 문자열.</param>
-        /// <param name="scheme">스킴(출력).</param>
-        /// <param name="path">경로(출력).</param>
-        /// <returns>분리에 성공하면 true.</returns>
         /// <summary>
         /// 이 해석기가 해석할 수 있는 경로 형식인지 판정한다.
         /// </summary>
@@ -504,6 +499,11 @@ namespace Esam.Domain.Alarms
             return true;
         }
 
+        /// <summary>"scheme:path" 형식을 분리한다.</summary>
+        /// <param name="source">원본 문자열.</param>
+        /// <param name="scheme">스킴(출력).</param>
+        /// <param name="path">경로(출력).</param>
+        /// <returns>분리에 성공하면 true.</returns>
         private static bool TrySplit(string source, out string scheme, out string path)
         {
             scheme = null;

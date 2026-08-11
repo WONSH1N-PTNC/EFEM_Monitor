@@ -283,13 +283,6 @@ namespace Esam.Domain.Alarms
             }
         }
 
-        /// <summary>OutOfBand 조건을 판정한다. 참조 모드의 정상 대역을 벗어나면 성립이다.</summary>
-        /// <param name="rule">알람 규칙.</param>
-        /// <param name="resolver">값 해석기.</param>
-        /// <param name="config">제어 설정.</param>
-        /// <param name="value">판정 값(출력).</param>
-        /// <param name="detail">사유 설명(출력).</param>
-        /// <returns>대역을 벗어나면 true.</returns>
         /// <summary>
         /// 레시피의 센서별 상한 또는 하한과 비교한다.
         /// </summary>
@@ -355,6 +348,13 @@ namespace Esam.Domain.Alarms
             return true;
         }
 
+        /// <summary>OutOfBand 조건을 판정한다. 참조 모드의 정상 대역을 벗어나면 성립이다.</summary>
+        /// <param name="rule">알람 규칙.</param>
+        /// <param name="resolver">값 해석기.</param>
+        /// <param name="config">제어 설정.</param>
+        /// <param name="value">판정 값(출력).</param>
+        /// <param name="detail">사유 설명(출력).</param>
+        /// <returns>대역을 벗어나면 true.</returns>
         private static bool TestOutOfBand(
             AlarmRule rule,
             IAlarmValueResolver resolver,
