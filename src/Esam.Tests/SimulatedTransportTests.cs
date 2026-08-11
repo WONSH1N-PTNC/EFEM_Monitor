@@ -66,7 +66,7 @@ namespace Esam.Tests
             _transport.Close();
 
             ModbusResponse response = _transport.Execute(
-                ModbusRequest.ReadHolding(4, 0, 1), CancellationToken.None);
+                ModbusRequest.ReadHolding(4, SimulatedPressureSensor.PressureRegister, 1), CancellationToken.None);
 
             Assert.False(response.IsSuccess);
             Assert.Equal(ModbusFailureKind.PortError, response.FailureKind);
@@ -243,13 +243,23 @@ namespace Esam.Tests
 
             _plant.Advance(10.0);
 
+            // 0x4041 현재속도, 0x4042 고장코드가 연속이다(device-map.json 의 runtime 그룹과 동일).
+            // 운전 상태(0x4037)는 연속 주소가 아니므로 따로 읽는다.
             ModbusResponse read = _transport.Execute(
                 ModbusRequest.ReadHolding(21, SimulatedBlowerFan.CurrentRpmRegister, 2),
                 CancellationToken.None);
 
             Assert.True(read.IsSuccess);
             Assert.Equal(1500, read.GetUInt16(0));
-            Assert.Equal(2, read.GetUInt16(1)); // 2 = 정속 운전
+
+            // 0x4042 는 고장코드다. 정상이면 0 이어야 한다.
+            Assert.Equal(0, read.GetUInt16(1));
+
+            ModbusResponse status = _transport.Execute(
+                ModbusRequest.ReadHolding(21, SimulatedBlowerFan.RunStatusRegister, 1),
+                CancellationToken.None);
+
+            Assert.True(status.IsSuccess);
         }
 
         [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
@@ -272,7 +282,7 @@ namespace Esam.Tests
         {
             // 실제 버스에서 응답 없는 주소를 폴링하면 타임아웃이 된다.
             ModbusResponse response = _transport.Execute(
-                ModbusRequest.ReadHolding(99, 0, 1), CancellationToken.None);
+                ModbusRequest.ReadHolding(99, SimulatedPressureSensor.PressureRegister, 1), CancellationToken.None);
 
             Assert.False(response.IsSuccess);
             Assert.Equal(ModbusFailureKind.Timeout, response.FailureKind);
@@ -297,7 +307,7 @@ namespace Esam.Tests
             Assert.True(_transport.DetachSlave(4));
 
             ModbusResponse response = _transport.Execute(
-                ModbusRequest.ReadHolding(4, 0, 1), CancellationToken.None);
+                ModbusRequest.ReadHolding(4, SimulatedPressureSensor.PressureRegister, 1), CancellationToken.None);
 
             Assert.Equal(ModbusFailureKind.Timeout, response.FailureKind);
         }
@@ -326,7 +336,7 @@ namespace Esam.Tests
                 for (int i = 0; i < 5; i++)
                 {
                     ModbusResponse response = faulty.Execute(
-                        ModbusRequest.ReadHolding(4, 0, 1), CancellationToken.None);
+                        ModbusRequest.ReadHolding(4, SimulatedPressureSensor.PressureRegister, 1), CancellationToken.None);
 
                     Assert.Equal(ModbusFailureKind.Timeout, response.FailureKind);
                 }
@@ -345,7 +355,7 @@ namespace Esam.Tests
                 cts.Cancel();
 
                 ModbusResponse response = _transport.Execute(
-                    ModbusRequest.ReadHolding(4, 0, 1), cts.Token);
+                    ModbusRequest.ReadHolding(4, SimulatedPressureSensor.PressureRegister, 1), cts.Token);
 
                 Assert.Equal(ModbusFailureKind.Canceled, response.FailureKind);
             }
@@ -358,12 +368,12 @@ namespace Esam.Tests
         {
             for (int i = 0; i < 10; i++)
             {
-                _transport.Execute(ModbusRequest.ReadHolding(4, 0, 1), CancellationToken.None);
+                _transport.Execute(ModbusRequest.ReadHolding(4, SimulatedPressureSensor.PressureRegister, 1), CancellationToken.None);
             }
 
             // 미등록 슬레이브로 실패 2건 발생
-            _transport.Execute(ModbusRequest.ReadHolding(99, 0, 1), CancellationToken.None);
-            _transport.Execute(ModbusRequest.ReadHolding(98, 0, 1), CancellationToken.None);
+            _transport.Execute(ModbusRequest.ReadHolding(99, SimulatedPressureSensor.PressureRegister, 1), CancellationToken.None);
+            _transport.Execute(ModbusRequest.ReadHolding(98, SimulatedPressureSensor.PressureRegister, 1), CancellationToken.None);
 
             Assert.Equal(12, _transport.Statistics.TotalTransactions);
             Assert.Equal(10, _transport.Statistics.SuccessCount);
@@ -377,10 +387,10 @@ namespace Esam.Tests
         [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 성공하면_연속실패_카운터가_초기화된다()
         {
-            _transport.Execute(ModbusRequest.ReadHolding(99, 0, 1), CancellationToken.None);
+            _transport.Execute(ModbusRequest.ReadHolding(99, SimulatedPressureSensor.PressureRegister, 1), CancellationToken.None);
             Assert.Equal(1, _transport.Statistics.ConsecutiveFailures);
 
-            _transport.Execute(ModbusRequest.ReadHolding(4, 0, 1), CancellationToken.None);
+            _transport.Execute(ModbusRequest.ReadHolding(4, SimulatedPressureSensor.PressureRegister, 1), CancellationToken.None);
             Assert.Equal(0, _transport.Statistics.ConsecutiveFailures);
 
             Assert.Equal(1, _transport.Statistics.MaxConsecutiveFailures);
@@ -389,7 +399,7 @@ namespace Esam.Tests
         [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 통계를_초기화할_수_있다()
         {
-            _transport.Execute(ModbusRequest.ReadHolding(4, 0, 1), CancellationToken.None);
+            _transport.Execute(ModbusRequest.ReadHolding(4, SimulatedPressureSensor.PressureRegister, 1), CancellationToken.None);
             Assert.Equal(1, _transport.Statistics.TotalTransactions);
 
             _transport.Statistics.Reset();

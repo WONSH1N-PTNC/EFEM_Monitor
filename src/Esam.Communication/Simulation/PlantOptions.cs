@@ -76,24 +76,34 @@ namespace Esam.Communication.Simulation
         /// <summary>ESAM 목표 운전점 기준 기본값으로 초기화한다.</summary>
         public PlantOptions()
         {
-            // 센서 1: 20 - 15*0.5 - 20*0.333 ≈ 5.8 Pa (목표 6 Pa)
+            // ── 기준 운전점 ────────────────────────────────────────────────────
+            // 팬 효과는 rpm / FanMaxRpm 비율로 들어간다. 따라서 FanMaxRpm 을 바꾸면
+            // 같은 rpm 에서 팬 효과가 달라지고, 운전점 전체가 이동한다.
+            //
+            // FanMaxRpm 을 3000 → 4000 으로 올렸을 때(폐루프 설정 상한 확정)
+            // 팬 게인을 함께 올리지 않아 기준 운전점이 어긋나 있었다.
+            // 1000 rpm 기준 비율이 0.333 → 0.25 로 줄었으므로 게인을 4/3 배 했다.
+            //
+            // 기준 조건: 밸브 50% 개도, 팬 1000 rpm (= 4000 rpm 의 0.25)
+
+            // 센서 1: 20 - 15*0.5 - 26.667*0.25 ≈ 5.8 Pa (목표 6 Pa)
             Sensor1BasePa = 20.0;
             Sensor1ValveGain = 15.0;
-            Sensor1FanGain = 20.0;
+            Sensor1FanGain = 26.667;
             Sensor1TauSec = 3.0;
             Sensor1NoiseSigmaPa = 0.2;
 
-            // 센서 2: 20 - 40*0.5 - 30*0.333 = -10 Pa (목표 -10 Pa)
+            // 센서 2: 20 - 40*0.5 - 40*0.25 = -10 Pa (목표 -10 Pa)
             Sensor2BasePa = 20.0;
             Sensor2ValveGain = 40.0;
-            Sensor2FanGain = 30.0;
+            Sensor2FanGain = 40.0;
             Sensor2TauSec = 1.5;
             Sensor2NoiseSigmaPa = 0.8;
 
-            // 센서 3: -50 - 200*0.5 - 150*0.333 = -200 Pa (목표 -200 Pa)
+            // 센서 3: -50 - 200*0.5 - 200*0.25 = -200 Pa (목표 -200 Pa)
             Sensor3BasePa = -50.0;
             Sensor3ValveGain = 200.0;
-            Sensor3FanGain = 150.0;
+            Sensor3FanGain = 200.0;
             Sensor3TauSec = 1.0;
             Sensor3NoiseSigmaPa = 3.0;
 

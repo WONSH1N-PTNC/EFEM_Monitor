@@ -23,8 +23,7 @@
         "parity": "None",
         "dataBits": 8,
         "stopBits": 1,
-        "readTimeoutMs": 300,
-        "writeTimeoutMs": 300,
+        "responseTimeoutMs": 300,
         "retryCount": 2
       },
       "polling": { "fastMs": 250, "mediumMs": 1000, "slowMs": 5000 }
@@ -38,8 +37,7 @@
         "parity": "None",
         "dataBits": 8,
         "stopBits": 1,
-        "readTimeoutMs": 300,
-        "writeTimeoutMs": 300,
+        "responseTimeoutMs": 300,
         "retryCount": 2
       },
       "polling": { "fastMs": 150, "mediumMs": 1000, "slowMs": 5000 }
@@ -62,7 +60,11 @@
             {
               "key": "pressurePa",
               "type": "Int16",
-              "scale": 1.0,
+
+              // 0.1 Pa/LSB. 매뉴얼 미확보로 잠정값이다(COMM_MAP.md §7 TBD).
+              // 1 Pa/LSB 로는 센서1 대역(4~8 Pa)이 4 LSB 로 양자화되어 제어가 성립하지 않는다.
+              // 시뮬레이션 슬레이브도 같은 값을 쓴다. 한쪽만 바꾸면 테스트가 막는다.
+              "scale": 0.1,
               "unit": "Pa",
               // 영점 보정과 이동평균은 측정값에만 적용한다.
               // 상태·알람 레지스터에 적용하면 코드값이 왜곡된다.

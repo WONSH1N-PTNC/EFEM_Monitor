@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Threading;
 using Esam.Communication.Abstractions;
 using Esam.Communication.Configuration;
@@ -512,7 +513,10 @@ namespace Esam.Tests
             pressure.Name = "pressure";
             pressure.Tier = PollingTier.Fast;
             pressure.FunctionCode = 3;
-            pressure.StartAddress = "0x0000";
+            // ★ 시뮬레이션 슬레이브의 실제 주소를 상수로 참조한다.
+            // 리터럴을 적어 두면 IO List 가 바뀔 때 여기만 남아,
+            // 읽기가 전부 예외 응답(0x02)으로 실패하면서도 원인이 드러나지 않는다.
+            pressure.StartAddress = ToHex(SimulatedPressureSensor.PressureRegister);
             pressure.Count = 1;
             pressure.Points.Add(new PointDefinition
             {
@@ -530,13 +534,21 @@ namespace Esam.Tests
             status.Name = "status";
             status.Tier = PollingTier.Slow;
             status.FunctionCode = 3;
-            status.StartAddress = "0x0001";
+            status.StartAddress = ToHex(SimulatedPressureSensor.StatusRegister);
             status.Count = 1;
             status.Points.Add(new PointDefinition { Key = "deviceStatus", Type = PointDataType.UInt16 });
 
             type.ReadGroups.Add(pressure);
             type.ReadGroups.Add(status);
             return type;
+        }
+
+        /// <summary>레지스터 주소를 설정 파일과 같은 16진 표기로 만든다.</summary>
+        /// <param name="address">레지스터 주소.</param>
+        /// <returns>"0x4001" 형태의 문자열.</returns>
+        private static string ToHex(ushort address)
+        {
+            return "0x" + address.ToString("X4", CultureInfo.InvariantCulture);
         }
 
         // ── 폴링 동작 ───────────────────────────────────────────────────────────

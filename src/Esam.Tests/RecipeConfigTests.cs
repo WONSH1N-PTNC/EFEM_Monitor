@@ -37,6 +37,44 @@ namespace Esam.Tests
         // ── 배포 파일 검증 ──────────────────────────────────────────────────────
 
         [Fact]
+        public void 배포_설정의_압력_스케일이_시뮬레이션과_일치한다()
+        {
+            // ★ 스케일 팩터는 아직 미확정이다(COMM_MAP.md §7 TBD).
+            // 미확정인 값을 두 곳에 따로 적어 두면 어긋난 것을 아무도 모른다.
+            //
+            // 어긋나면 측정값이 배수만큼 틀린다. 10배 틀린 압력으로 제어하면
+            // 목표의 1/10 지점에 수렴하고, 화면·알람·상위 보고까지 전부 함께 틀린다.
+            // 그런데 각 계층은 자기 기준으로는 일관되므로 어디도 오류를 내지 않는다.
+            //
+            // 실장비 매뉴얼을 확보하면 두 값을 함께 바꿔야 한다.
+            // 한쪽만 바꾸면 이 테스트가 알려준다.
+            DeviceMap map = LoadShippedMap();
+
+            DeviceTypeDefinition type = map.FindType("DiffPressure");
+            Assert.NotNull(type);
+
+            PointDefinition pressure = null;
+
+            foreach (ReadGroupDefinition group in type.ReadGroups)
+            {
+                foreach (PointDefinition point in group.Points)
+                {
+                    if (point.Key == "pressurePa")
+                    {
+                        pressure = point;
+                    }
+                }
+            }
+
+            Assert.NotNull(pressure);
+
+            Assert.Equal(
+                Esam.Communication.Simulation.SimulatedPressureSensor.PaPerLsb,
+                pressure.Scale,
+                6);
+        }
+
+        [Fact]
         public void 배포용_recipe_json이_통신_구성과_맞물린다()
         {
             RecipeLoadResult result = LoadShipped();

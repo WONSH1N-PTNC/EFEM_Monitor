@@ -215,7 +215,11 @@ namespace Esam.Tests
             {
                 Key = PointKeys.PressurePa,
                 Type = PointDataType.Int16,
-                Scale = 1.0,
+
+                // 시뮬레이션 슬레이브의 인코딩(0.1 Pa/LSB)과 일치시킨다.
+                // 어긋나면 측정값이 배수만큼 틀린 채 각 계층은 자기 기준으로 일관해
+                // 어디에서도 오류가 나지 않는다.
+                Scale = SimulatedPressureSensor.PaPerLsb,
                 Unit = "Pa",
                 ApplyCalibration = true
             });
@@ -583,18 +587,39 @@ namespace Esam.Tests
             Assert.Equal(5, snapshot.Valves.Count);
             Assert.Equal(5, snapshot.Fans.Count);
 
-            // 밸브 닫힘·팬 정지 상태의 센서 2 압력은 플랜트 base = +20 Pa.
             PressureReading reading = snapshot.FindPressure("S2-1");
 
             Assert.NotNull(reading);
             Assert.Equal(Quality.Good, reading.Quality);
-            Assert.InRange(reading.Pa, 16.0, 24.0);
+
+            // ★ 절대값 대신 플랜트의 참값과 대조한다.
+            // 리터럴로 적으면 스케일 팩터가 어긋났을 때 통과할 수 있다.
+            // 스케일이 어긋나면 측정값이 배수만큼 틀리지만 각 계층은 자기 기준으로
+            // 일관하므로 어디에서도 오류가 나지 않는다. 왕복이 참값으로 돌아오는지가
+            // 확인해야 할 성질이다.
+            double truePv;
+            Assert.True(runtime.Plant.TryGetTruePressure("S2-1", out truePv));
+
+            // 허용오차는 인코딩 양자화(1 LSB)에서만 나온다.
+            Assert.Equal(truePv, reading.Pa, 1);
+
+            // 밸브 닫힘·팬 정지 상태이므로 플랜트 base = +20 Pa 부근이어야 한다.
+            // 참값 자체가 엉뚱하면 위 대조는 둘이 함께 틀려도 통과한다.
+            Assert.InRange(truePv, 16.0, 24.0);
         }
 
         [Fact(Timeout = TestTimeoutMs)]
         public void 밸브_상태가_pulse와_개도율로_변환된다()
         {
             EsamRuntime runtime = CreateRuntime();
+
+            // 원점 복귀를 마친 상태로 둔다.
+            // 이 테스트가 검증하는 것은 단위 변환이지 원점 복귀 시퀀스가 아니다.
+            // 시퀀스 자체는 별도 테스트가 실제로 돌려서 확인한다.
+            //
+            // PreHomeValves 기본값이 false 로 바뀐 뒤(D3) 플랜트는 미복귀 상태로 시작하므로
+            // 명시하지 않으면 IsHomeDone 이 false 다.
+            runtime.Plant.CompleteAllHoming();
 
             runtime.Plant.ApplyCommand(ActuatorCommand.SetValvePosition(
                 "V-1", 2500, CommandPriority.Automatic, "테스트"));
@@ -631,7 +656,9 @@ namespace Esam.Tests
             Assert.Equal(Quality.Bad, degraded.Quality);
 
             // 값 자체는 참고용으로 남긴다. 0 으로 지우면 트렌드에 가짜 급락이 기록된다.
-            Assert.InRange(degraded.Pa, 16.0, 24.0);
+            double truePv;
+            Assert.True(runtime.Plant.TryGetTruePressure("S2-1", out truePv));
+            Assert.Equal(truePv, degraded.Pa, 1);
 
             // 같은 버스의 다른 센서는 영향을 받지 않는다.
             Assert.Equal(Quality.Good, runtime.Store.Current.FindPressure("S2-2").Quality);
