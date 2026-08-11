@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Esam.Domain.Alarms;
 using Esam.Domain.Configuration;
@@ -18,7 +19,18 @@ namespace Esam.Tests
             return new InterlockEvaluator(InterlockEvaluator.CreateDefaultRules());
         }
 
-        private static SystemSnapshot SnapshotWithSensor3(double pa, Quality quality = Quality.Good)
+        /// <summary>센서 3 값을 지정해 스냅샷을 만든다.</summary>
+        /// <param name="pa">체인 1 의 센서 3 압력 [Pa].</param>
+        /// <param name="quality">체인 1 의 센서 3 품질.</param>
+        /// <param name="updatedUtc">측정값 갱신 시각. 판정 시각과 맞춰야 한다.</param>
+        /// <remarks>
+        /// IL-01 은 값의 나이를 본다(<c>MaxDataAgeMs</c> 기본 1000 ms). 판정 시각을
+        /// 앞으로 옮기는 테스트는 갱신 시각도 함께 옮겨야 한다. 그러지 않으면
+        /// 실제로는 250 ms 마다 갱신되는 값이 테스트에서만 수 초 낡은 값이 되어
+        /// <b>판정 불가 경로로 빠지고</b>, 검증하려던 히스테리시스·래치 동작을 지나지 않는다.
+        /// </remarks>
+        private static SystemSnapshot SnapshotWithSensor3(
+            double pa, Quality quality = Quality.Good, DateTime? updatedUtc = null)
         {
             Dictionary<string, PressureReading> pressures = new Dictionary<string, PressureReading>();
             Dictionary<string, ValveState> valves = new Dictionary<string, ValveState>();
@@ -28,7 +40,8 @@ namespace Esam.Tests
             {
                 // 체인 1의 센서 3만 인자값으로 두고 나머지는 정상 운전점(-200 Pa)으로 채운다.
                 double value = i == 1 ? pa : -200.0;
-                pressures["S3-" + i] = Build.Pressure("S3-" + i, value, i == 1 ? quality : Quality.Good);
+                pressures["S3-" + i] = Build.Pressure(
+                    "S3-" + i, value, i == 1 ? quality : Quality.Good, updatedUtc);
                 valves["V-" + i] = Build.Valve("V-" + i, 2500);
                 fans["F-" + i] = Build.Fan("F-" + i, 1000, 1000);
             }
@@ -288,7 +301,8 @@ namespace Esam.Tests
 
             // 압력이 완전히 정상으로 회복되어도 래치는 유지된다.
             InterlockEvaluation afterRecovery = evaluator.Evaluate(
-                SnapshotWithSensor3(-200.0), config, Build.T0.AddSeconds(10));
+                SnapshotWithSensor3(-200.0, Quality.Good, Build.T0.AddSeconds(10)),
+                config, Build.T0.AddSeconds(10));
 
             Assert.True(afterRecovery.HasTrip);
             Assert.Equal(2, afterRecovery.Commands.Count);
@@ -296,10 +310,52 @@ namespace Esam.Tests
             // Reset 후에야 해제된다.
             evaluator.Reset("IL-01");
             InterlockEvaluation afterReset = evaluator.Evaluate(
-                SnapshotWithSensor3(-200.0), config, Build.T0.AddSeconds(20));
+                SnapshotWithSensor3(-200.0, Quality.Good, Build.T0.AddSeconds(20)),
+                config, Build.T0.AddSeconds(20));
 
             Assert.False(afterReset.HasTrip);
             Assert.False(evaluator.HasLatched);
+        }
+
+        [Fact]
+        public void 품질이_Good이어도_값이_낡으면_판정하지_않는다()
+        {
+            // ★ D8. SnapshotBuilder 의 Stale 임계값은 Slow 티어까지 덮어야 해서 15초다.
+            // 그래서 Fast 센서가 수 초 갱신되지 않아도 품질은 Good 으로 남는다.
+            // 250 ms 응답을 목표로 하는 안전 기능이 그 값으로 판정해서는 안 된다.
+            InterlockEvaluator evaluator = CreateDefault();
+            ControlConfig config = Build.Config();
+
+            InterlockRule rule = evaluator.FindRule("IL-01");
+            Assert.NotNull(rule);
+            Assert.True(rule.MaxDataAgeMs > 0.0, "IL-01 에 데이터 신선도 상한이 없습니다.");
+
+            // 갱신 시각은 T0, 판정 시각은 상한을 넘긴 시점.
+            DateTime judgedAt = Build.T0.AddMilliseconds(rule.MaxDataAgeMs + 1.0);
+
+            InterlockEvaluation result = evaluator.Evaluate(
+                SnapshotWithSensor3(50.0, Quality.Good, Build.T0), config, judgedAt);
+
+            // 발동 조건(50 Pa > 0 Pa)을 만족하지만 판정하지 않는다.
+            Assert.False(result.HasTrip);
+            Assert.True(result.HasUnjudgeableChain, "판정 불가 사실이 보고되지 않았습니다.");
+        }
+
+        [Fact]
+        public void 값이_신선하면_같은_조건에서_발동한다()
+        {
+            // 위 테스트가 "낡아서" 발동하지 않은 것인지 확인한다.
+            // 이 대조가 없으면 판정 자체가 깨져 있어도 위 테스트는 통과한다.
+            InterlockEvaluator evaluator = CreateDefault();
+            ControlConfig config = Build.Config();
+
+            DateTime judgedAt = Build.T0.AddSeconds(5);
+
+            InterlockEvaluation result = evaluator.Evaluate(
+                SnapshotWithSensor3(50.0, Quality.Good, judgedAt), config, judgedAt);
+
+            Assert.True(result.HasTrip);
+            Assert.False(result.HasUnjudgeableChain);
         }
 
         [Fact]
@@ -357,11 +413,15 @@ namespace Esam.Tests
 
             // -10 Pa: 발동 임계(0)보다는 낮지만 해제 임계(-20)에는 못 미쳤다 → 유지
             Assert.True(evaluator
-                .Evaluate(SnapshotWithSensor3(-10.0), config, Build.T0.AddSeconds(1)).HasTrip);
+                .Evaluate(
+                    SnapshotWithSensor3(-10.0, Quality.Good, Build.T0.AddSeconds(1)),
+                    config, Build.T0.AddSeconds(1)).HasTrip);
 
             // -30 Pa: 해제 임계를 넘어섰다 → 해제
             Assert.False(evaluator
-                .Evaluate(SnapshotWithSensor3(-30.0), config, Build.T0.AddSeconds(2)).HasTrip);
+                .Evaluate(
+                    SnapshotWithSensor3(-30.0, Quality.Good, Build.T0.AddSeconds(2)),
+                    config, Build.T0.AddSeconds(2)).HasTrip);
         }
 
         [Fact]

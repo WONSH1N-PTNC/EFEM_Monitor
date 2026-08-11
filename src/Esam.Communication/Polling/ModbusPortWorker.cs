@@ -85,6 +85,9 @@ namespace Esam.Communication.Polling
         /// <summary>지령 실행이 실패했을 때 발생한다. 알람 판정과 로그에 사용한다.</summary>
         public event EventHandler<CommandFailedEventArgs> CommandFailed;
 
+        /// <summary>지령이 끝까지 전송되었을 때 발생한다. 실패 연속 횟수를 되돌리는 데 쓴다.</summary>
+        public event EventHandler<CommandCompletedEventArgs> CommandCompleted;
+
         /// <summary>포트 워커를 생성한다.</summary>
         /// <param name="portId">포트 ID.</param>
         /// <param name="transport">전송 계층(실장비 또는 시뮬레이션).</param>
@@ -381,10 +384,42 @@ namespace Esam.Communication.Polling
         {
             ActuatorCommand command;
 
+            // 이 사이클에 처리할 지령 수의 상한.
+            //
+            // ★ 이 상한이 없으면 폴링 사이클이 끝나지 않을 수 있다.
+            // 지령 실패는 상위에서 장애로 escalation 되고, 그 처리가 다시
+            // 안전 지령을 투입한다. 그 지령이 또 실패하면 되먹임이 성립한다.
+            //
+            //   지령 실패 → 장애 보고 → 파킹 지령 투입 → 지령 실패 → …
+            //
+            // 큐에서 꺼내는 순서로 재귀가 아니므로 스택 가드로는 막지 못한다.
+            // 그리고 이 루프가 끝나지 않으면 읽기도, 인터록 판정도, 화면 갱신도
+            // 영구히 멈춘다. 통신 자체가 죽는 것과 같다.
+            //
+            // 남긴 지령은 버리지 않는다. 큐에 그대로 남아 다음 사이클에 처리되고,
+            // 인터록 지령은 발동이 지속되는 동안 재투입되므로 유실되지 않는다.
+            int budget = (_devices.Count * 4) + 8;
+
             // 취소를 꺼낸 뒤에 확인하면 그 지령이 조용히 버려진다.
             // 인터록 지령이라면 안전 지령 유실이므로 반드시 꺼내기 전에 확인한다.
             while (!token.IsCancellationRequested && _commands.TryDequeue(out command))
             {
+                if (--budget < 0)
+                {
+                    // 상한에 걸린 사실 자체가 이상 신호다. 조용히 넘기지 않는다.
+                    RaiseCommandFailed(new CommandFailedEventArgs(
+                        PortId, command,
+                        string.Format(CultureInfo.InvariantCulture,
+                            "이번 사이클의 지령 처리 상한을 초과했습니다(대기 {0}건). "
+                            + "지령이 실행보다 빠르게 쌓이고 있습니다.",
+                            _commands.Count + 1),
+                        _clock.UtcNow));
+
+                    // 꺼낸 지령을 되돌린다. 버리면 안전 지령이 유실된다.
+                    _commands.Enqueue(command);
+                    return;
+                }
+
                 DeviceRuntime device;
                 if (!_deviceIndex.TryGetValue(command.DeviceId, out device))
                 {
@@ -439,6 +474,29 @@ namespace Esam.Communication.Polling
                     _clock.UtcNow));
 
                 return;
+            }
+
+            // 전 단계가 통했다. 상위가 실패 연속 횟수를 되돌릴 수 있도록 알린다.
+            RaiseCommandCompleted(new CommandCompletedEventArgs(PortId, command, _clock.UtcNow));
+        }
+
+        /// <summary>지령 완료 이벤트를 발생시킨다.</summary>
+        /// <param name="args">이벤트 인자.</param>
+        private void RaiseCommandCompleted(CommandCompletedEventArgs args)
+        {
+            EventHandler<CommandCompletedEventArgs> handler = CommandCompleted;
+            if (handler == null)
+            {
+                return;
+            }
+
+            try
+            {
+                handler(this, args);
+            }
+            catch (Exception)
+            {
+                // 상동. 구독자의 예외가 폴링 루프를 죽여서는 안 된다.
             }
         }
 
@@ -530,6 +588,38 @@ namespace Esam.Communication.Polling
             PortId = portId;
             Command = command;
             Reason = reason;
+            OccurredUtc = occurredUtc;
+        }
+    }
+
+    /// <summary>지령이 끝까지 전송된 사실을 알린다.</summary>
+    /// <remarks>
+    /// <para>실패만 알리면 상위는 <b>복구를 알 수 없다.</b> 실패 연속 횟수가
+    /// 임계를 넘으면 장애로 보고하는데, 그 뒤 장치가 되살아나도 카운터가
+    /// 내려가지 않으면 다음 장애를 새 장애로 구분할 수 없다.</para>
+    /// <para>성공을 알리는 이벤트가 필요한 이유가 이것이다.
+    /// 전송 성공은 "액추에이터를 움직일 수단이 살아 있다" 는 뜻이다.</para>
+    /// </remarks>
+    public sealed class CommandCompletedEventArgs : EventArgs
+    {
+        /// <summary>포트 ID.</summary>
+        public string PortId { get; private set; }
+
+        /// <summary>전송된 지령.</summary>
+        public ActuatorCommand Command { get; private set; }
+
+        /// <summary>완료 시각(UTC).</summary>
+        public DateTime OccurredUtc { get; private set; }
+
+        /// <summary>지령 완료 정보를 생성한다.</summary>
+        /// <param name="portId">포트 ID.</param>
+        /// <param name="command">전송된 지령.</param>
+        /// <param name="occurredUtc">완료 시각(UTC).</param>
+        public CommandCompletedEventArgs(
+            string portId, ActuatorCommand command, DateTime occurredUtc)
+        {
+            PortId = portId;
+            Command = command;
             OccurredUtc = occurredUtc;
         }
     }

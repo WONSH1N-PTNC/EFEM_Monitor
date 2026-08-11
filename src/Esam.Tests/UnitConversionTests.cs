@@ -175,10 +175,38 @@ namespace Esam.Tests
         }
 
         [Fact]
-        public void 기본_설정은_팬_MaxRpm_미확정이라_자동제어에_사용할_수_없다()
+        public void 기본_설정은_팬_사양이_확정되어_자동제어에_사용할_수_있다()
         {
-            // DESIGN.md Open Issue #20 — 사양 확보 전 오동작 방지
-            Assert.False(new FanActuatorConfig().IsUsableForAutoControl);
+            // Open Issue #20 이 닫혔다. JKBLD300V2 폐루프 속도 설정(0x4006) 범위
+            // 200~4000 RPM 이 기본값이 되었으므로 기본 설정으로도 자동 제어가 가능하다.
+            FanActuatorConfig fan = new FanActuatorConfig();
+
+            Assert.Equal(200.0, fan.MinRpm);
+            Assert.Equal(4000.0, fan.MaxRpm);
+            Assert.True(fan.IsUsableForAutoControl);
+        }
+
+        [Fact]
+        public void 팬_MaxRpm이_미확정이면_자동제어에_사용할_수_없다()
+        {
+            // 이쪽이 원래 검증하려던 것이다. 사양이 확정되면서 기본값이 바뀌었을 뿐,
+            // "미확정 사양으로 자동 제어에 들어가지 않는다" 는 규칙은 그대로 필요하다.
+            //
+            // MaxRpm 이 0 이면 증속 여지를 계산할 수 없다. 그 상태로 밴드 제어에
+            // 들어가면 도달하지 못하는 목표를 향해 계속 증속 지령을 낸다.
+            FanActuatorConfig fan = new FanActuatorConfig();
+            fan.MaxRpm = 0.0;
+
+            Assert.False(fan.IsUsableForAutoControl);
+
+            // MaxRpm 이 MinRpm 이하인 구성도 증속 범위가 없다.
+            fan.MaxRpm = fan.MinRpm;
+            Assert.False(fan.IsUsableForAutoControl);
+
+            // 조정량이 0 이면 영원히 같은 회전수에 머문다.
+            fan.MaxRpm = 4000.0;
+            fan.StepRpm = 0.0;
+            Assert.False(fan.IsUsableForAutoControl);
         }
 
         [Fact]

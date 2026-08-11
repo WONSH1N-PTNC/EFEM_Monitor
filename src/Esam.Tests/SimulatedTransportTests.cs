@@ -60,7 +60,7 @@ namespace Esam.Tests
 
         // ── 기본 왕복 통신 ──────────────────────────────────────────────────────
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 포트를_열지_않으면_PortError를_반환한다()
         {
             _transport.Close();
@@ -72,7 +72,7 @@ namespace Esam.Tests
             Assert.Equal(ModbusFailureKind.PortError, response.FailureKind);
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 차압센서_압력값을_읽는다()
         {
             // 초기 상태(밸브 닫힘, 팬 정지)의 센서 2 압력은 base = +20 Pa.
@@ -87,7 +87,7 @@ namespace Esam.Tests
             Assert.Equal(20.0, response.GetInt16(0) * SimulatedPressureSensor.PaPerLsb, 6);
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 음압을_부호있는_레지스터로_정확히_전달한다()
         {
             // 밸브를 완전히 열면 센서 2는 20 - 40 = -20 Pa 로 내려간다.
@@ -110,7 +110,7 @@ namespace Esam.Tests
 
         // ── 밸브 실제 레지스터 시퀀스 ───────────────────────────────────────────
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 밸브는_위치설정_후_Move명령을_받아야_움직인다()
         {
             // 통신자료 규정: 0x6202 에 위치를 쓴 뒤 0x6002 에 0x10(PR0 Move)을 써야 이동한다.
@@ -143,7 +143,7 @@ namespace Esam.Tests
             Assert.Equal(2500, pulse);
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 밸브_현재위치를_0x602B에서_읽는다()
         {
             _plant.ApplyCommand(ActuatorCommand.SetValvePosition(
@@ -158,7 +158,7 @@ namespace Esam.Tests
             Assert.Equal(1234, response.GetUInt16(0));
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void Homing_명령으로_원점복귀_상태가_된다()
         {
             ControlConfig config = Build.Config();
@@ -192,7 +192,7 @@ namespace Esam.Tests
             }
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 알람_리셋은_지정값_0x1111에만_반응한다()
         {
             SimulatedThrottleValve valve = (SimulatedThrottleValve)_transport.FindSlave(11);
@@ -232,7 +232,7 @@ namespace Esam.Tests
 
         // ── 송풍팬 (Modbus 직결) ────────────────────────────────────────────────
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 팬_RPM을_설정하고_현재값을_읽는다()
         {
             ModbusResponse write = _transport.Execute(
@@ -252,7 +252,7 @@ namespace Esam.Tests
             Assert.Equal(2, read.GetUInt16(1)); // 2 = 정속 운전
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 팬_현재값과_상태를_한번의_트랜잭션으로_읽는다()
         {
             // COMM_MAP.md 1.3 의 설계 요청(연속 주소 배치)이 지켜지는지 확인한다.
@@ -267,7 +267,7 @@ namespace Esam.Tests
 
         // ── 장애 시나리오 ───────────────────────────────────────────────────────
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 미등록_슬레이브는_타임아웃으로_처리된다()
         {
             // 실제 버스에서 응답 없는 주소를 폴링하면 타임아웃이 된다.
@@ -278,7 +278,7 @@ namespace Esam.Tests
             Assert.Equal(ModbusFailureKind.Timeout, response.FailureKind);
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 정의되지_않은_주소는_예외응답을_반환한다()
         {
             // device-map.json 의 주소 오타를 시뮬레이션에서 잡아낼 수 있어야 한다.
@@ -290,7 +290,7 @@ namespace Esam.Tests
             Assert.Equal(ModbusExceptionCode.IllegalDataAddress, response.ExceptionCode);
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 슬레이브를_분리하면_통신이_끊긴다()
         {
             // 인터록 IL-04(통신 상실) 시나리오를 재현하기 위한 기능이다.
@@ -302,7 +302,7 @@ namespace Esam.Tests
             Assert.Equal(ModbusFailureKind.Timeout, response.FailureKind);
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 슬레이브_ID_중복_등록은_즉시_예외를_던진다()
         {
             // 실제 버스에서 ID 중복은 응답 충돌을 일으키는 치명적 배선 오류다.
@@ -311,7 +311,7 @@ namespace Esam.Tests
                 _transport.AddSlave(new SimulatedPressureSensor(4, _plant, "S2-1")));
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 타임아웃_확률을_주입하면_모든_트랜잭션이_실패한다()
         {
             SimulationTransportOptions options = new SimulationTransportOptions();
@@ -337,7 +337,7 @@ namespace Esam.Tests
             }
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 취소_토큰이_설정되면_즉시_중단한다()
         {
             using (CancellationTokenSource cts = new CancellationTokenSource())
@@ -353,7 +353,7 @@ namespace Esam.Tests
 
         // ── 통계 ────────────────────────────────────────────────────────────────
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 통계가_성공률과_응답시간을_집계한다()
         {
             for (int i = 0; i < 10; i++)
@@ -374,7 +374,7 @@ namespace Esam.Tests
             Assert.True(_transport.Statistics.AverageResponseMs > 0.0);
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 성공하면_연속실패_카운터가_초기화된다()
         {
             _transport.Execute(ModbusRequest.ReadHolding(99, 0, 1), CancellationToken.None);
@@ -386,7 +386,7 @@ namespace Esam.Tests
             Assert.Equal(1, _transport.Statistics.MaxConsecutiveFailures);
         }
 
-        [Fact]
+        [Fact(Timeout = ServicesIntegrationTests.TestTimeoutMs)]
         public void 통계를_초기화할_수_있다()
         {
             _transport.Execute(ModbusRequest.ReadHolding(4, 0, 1), CancellationToken.None);

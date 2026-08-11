@@ -85,6 +85,10 @@ namespace Esam.Services
         private readonly Dictionary<string, int> _commandFailures =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>이미 알린 장애의 래치 키 집합. 해소될 때까지 다시 알리지 않는다.</summary>
+        private readonly HashSet<string> _escalated =
+            new HashSet<string>(StringComparer.Ordinal);
+
         private int _consecutiveEvaluationFailures;
         private int _consecutiveBlindCycles;
         private long _totalEvaluationFailures;
@@ -172,6 +176,7 @@ namespace Esam.Services
             lock (_gate)
             {
                 _consecutiveEvaluationFailures = 0;
+                _escalated.Remove("eval");
             }
         }
 
@@ -206,7 +211,7 @@ namespace Esam.Services
                 return false;
             }
 
-            RaiseFault(RuntimeFaultKind.EvaluationFailed, detail, count, exception, nowUtc);
+            RaiseFault(RuntimeFaultKind.EvaluationFailed, "eval", detail, count, exception, nowUtc);
             return true;
         }
 
@@ -249,7 +254,7 @@ namespace Esam.Services
                 return false;
             }
 
-            RaiseFault(RuntimeFaultKind.InterlockCommandFailed, detail, count, null, nowUtc);
+            RaiseFault(RuntimeFaultKind.InterlockCommandFailed, "cmd|" + key, detail, count, null, nowUtc);
             return true;
         }
 
@@ -265,6 +270,13 @@ namespace Esam.Services
             lock (_gate)
             {
                 _commandFailures.Remove(deviceId);
+
+                // 이 디바이스가 다시 실패하면 새 장애로 알린다.
+                _escalated.Remove("cmd|" + deviceId);
+
+                // 지령이 통했다는 것은 액추에이터를 움직일 수단이 살아 있다는 뜻이다.
+                // 실효 실패를 다시 판정할 수 있는 상태가 되었으므로 래치를 푼다.
+                _escalated.Remove("effect");
             }
         }
 
@@ -280,7 +292,7 @@ namespace Esam.Services
                 _lastDetail = detail;
             }
 
-            RaiseFault(RuntimeFaultKind.InterlockNotEffective, detail, 1, null, nowUtc);
+            RaiseFault(RuntimeFaultKind.InterlockNotEffective, "effect", detail, 1, null, nowUtc);
         }
 
         /// <summary>
@@ -310,7 +322,7 @@ namespace Esam.Services
                 return false;
             }
 
-            RaiseFault(RuntimeFaultKind.InterlockBlind, detail, count, null, nowUtc);
+            RaiseFault(RuntimeFaultKind.InterlockBlind, "blind", detail, count, null, nowUtc);
             return true;
         }
 
@@ -320,6 +332,7 @@ namespace Esam.Services
             lock (_gate)
             {
                 _consecutiveBlindCycles = 0;
+                _escalated.Remove("blind");
             }
         }
 
@@ -337,6 +350,7 @@ namespace Esam.Services
                 _consecutiveEvaluationFailures = 0;
                 _consecutiveBlindCycles = 0;
                 _commandFailures.Clear();
+                _escalated.Clear();
                 _lastEvaluationException = null;
                 _lastDetail = null;
             }
@@ -358,15 +372,44 @@ namespace Esam.Services
             }
         }
 
-        /// <summary>장애 이벤트를 일으킨다.</summary>
+        /// <summary>
+        /// 장애 이벤트를 일으킨다. 같은 장애가 해소되기 전에는 한 번만 낸다.
+        /// </summary>
         /// <param name="kind">장애 종류.</param>
+        /// <param name="latchKey">해소 판정 단위. 같은 키로는 다시 내지 않는다.</param>
         /// <param name="detail">설명.</param>
         /// <param name="count">연속 횟수.</param>
         /// <param name="exception">원인 예외.</param>
         /// <param name="nowUtc">발생 시각(UTC).</param>
+        /// <remarks>
+        /// <para><b>래치가 없으면 되먹임이 성립한다.</b> 구독자는 이 이벤트를 받아
+        /// 파킹 지령을 투입한다. 그 지령이 또 실패하면 여기로 돌아오고,
+        /// 매번 이벤트를 내면 지령이 실행보다 빠르게 쌓여 폴링 사이클이 끝나지 않는다.
+        /// 통신·인터록 판정·화면 갱신이 전부 멈춘다.</para>
+        /// <para>세는 것과 알리는 것을 분리했다. 누적 카운터는 계속 올라가므로
+        /// 실패가 지속되는 사실은 기록에 남는다. 다만 <b>상태 전이에서만</b> 알린다.
+        /// 장애가 해소되면(성공 기록 또는 <see cref="Reset"/>) 래치가 풀려
+        /// 다음 발생을 다시 알린다.</para>
+        /// <para>인터록 <b>판정</b>은 반대로 수준 기반이다(D2). 판정을 놓치면
+        /// 위험이 남지만, 장애 <b>보고</b>를 반복하는 것은 정보를 늘리지 않고
+        /// 시스템을 멈춘다. 성질이 다르므로 다르게 다룬다.</para>
+        /// </remarks>
         private void RaiseFault(
-            RuntimeFaultKind kind, string detail, int count, Exception exception, DateTime nowUtc)
+            RuntimeFaultKind kind,
+            string latchKey,
+            string detail,
+            int count,
+            Exception exception,
+            DateTime nowUtc)
         {
+            lock (_gate)
+            {
+                if (!_escalated.Add(latchKey))
+                {
+                    return;
+                }
+            }
+
             EventHandler<RuntimeFaultEventArgs> handler = FaultDetected;
 
             if (handler == null)

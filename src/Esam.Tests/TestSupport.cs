@@ -29,9 +29,13 @@ namespace Esam.Tests
     {
         public static readonly DateTime T0 = new DateTime(2026, 7, 31, 0, 0, 0, DateTimeKind.Utc);
 
-        public static PressureReading Pressure(string id, double pa, Quality quality = Quality.Good)
+        public static PressureReading Pressure(
+            string id, double pa, Quality quality = Quality.Good, DateTime? updatedUtc = null)
         {
-            return new PressureReading(id, pa, pa, 0, 0.0, quality, T0);
+            // 갱신 시각을 지정할 수 있어야 한다. 인터록은 값의 나이를 본다(IL-01 MaxDataAgeMs).
+            // 항상 T0 으로 고정하면 판정 시각을 앞으로 옮긴 테스트가 전부
+            // "낡은 값" 으로 취급되어 의도한 경로를 지나지 않는다.
+            return new PressureReading(id, pa, pa, 0, 0.0, quality, updatedUtc ?? T0);
         }
 
         public static ValveState Valve(

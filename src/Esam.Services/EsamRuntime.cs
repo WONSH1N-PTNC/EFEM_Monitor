@@ -672,6 +672,7 @@ namespace Esam.Services
                 // 아무도 알지 못했다. CloseValve 는 2단 시퀀스라 두 번째가 타임아웃하면
                 // 밸브가 전혀 움직이지 않는데, Tripped 는 이미 처리됐다고 알린 뒤다.
                 worker.CommandFailed += OnCommandFailed;
+                worker.CommandCompleted += OnCommandCompleted;
             }
         }
 
@@ -826,6 +827,11 @@ namespace Esam.Services
             if (!evaluation.HasTrip)
             {
                 _interlockTrippedSinceUtc = DateTime.MinValue;
+
+                // 발동이 풀렸으면 다음 발동은 새로 판정한다.
+                // 이 플래그를 되돌리지 않으면 최초 1회만 확인하고 그 뒤로는
+                // 실효 검증이 프로세스 수명 동안 영구히 꺼진다.
+                _interlockEffectReported = false;
                 return;
             }
 
@@ -935,6 +941,26 @@ namespace Esam.Services
             }
 
             _diagnostics.RecordInterlockCommandFailure(e.Command.DeviceId, e.Reason, _clock.UtcNow);
+        }
+
+        /// <summary>포트 워커의 지령 전송 성공을 처리한다.</summary>
+        /// <param name="sender">이벤트 발신자.</param>
+        /// <param name="e">완료 정보.</param>
+        /// <remarks>
+        /// <para>실패만 세면 <b>복구를 알 수 없다.</b> 장애를 한 번 보고한 뒤에는
+        /// 같은 장애를 반복 보고하지 않는데(되먹임 방지), 되살아난 사실을 기록하지 않으면
+        /// 그 다음 장애를 새 장애로 구분할 수 없다.</para>
+        /// <para>인터록 지령만이 아니라 자동 지령의 성공도 기록한다. 어느 쪽이든
+        /// 그 장치에 프레임이 도달했다는 사실은 같다.</para>
+        /// </remarks>
+        private void OnCommandCompleted(object sender, CommandCompletedEventArgs e)
+        {
+            if (e == null || e.Command == null)
+            {
+                return;
+            }
+
+            _diagnostics.RecordCommandSuccess(e.Command.DeviceId);
         }
 
         /// <summary>지정 포트가 해당 디바이스를 담당하는지 판정한다.</summary>
@@ -1219,6 +1245,7 @@ namespace Esam.Services
             {
                 worker.PollCompleted -= OnPollCompleted;
                 worker.CommandFailed -= OnCommandFailed;
+                worker.CommandCompleted -= OnCommandCompleted;
                 worker.Dispose();
             }
 
