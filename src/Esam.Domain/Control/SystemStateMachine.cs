@@ -19,18 +19,38 @@ namespace Esam.Domain.Control
         /// <summary>전이 시각(UTC).</summary>
         public DateTime OccurredUtc { get; private set; }
 
+        /// <summary>
+        /// 전이 순번. 1부터 증가한다.
+        /// </summary>
+        /// <remarks>
+        /// <para><b>이벤트 발생 순서는 전이 순서와 다를 수 있다.</b> 이벤트를 락 밖에서
+        /// 발생시키기 때문이다(재진입·교착 방지). 두 스레드가 A→B, B→A 로 전이하면
+        /// 알림은 반대 순서로 도착할 수 있다.</para>
+        /// <para>순서가 중요한 구독자(상위 보고·로그)는 이 값으로 판정한다.
+        /// 지금까지 본 최댓값보다 작으면 낡은 알림이므로 버린다.</para>
+        /// <para>현재 값을 알고 싶을 뿐이라면 이벤트가 아니라
+        /// <see cref="SystemStateMachine.Phase"/> 를 읽는 편이 안전하다.</para>
+        /// </remarks>
+        public long Sequence { get; private set; }
+
         /// <summary>상태 전이 정보를 생성한다.</summary>
         /// <param name="from">전이 전 단계.</param>
         /// <param name="to">전이 후 단계.</param>
         /// <param name="trigger">유발 사건.</param>
         /// <param name="occurredUtc">전이 시각(UTC).</param>
+        /// <param name="sequence">전이 순번.</param>
         public PhaseChangedEventArgs(
-            SystemPhase from, SystemPhase to, SystemTrigger trigger, DateTime occurredUtc)
+            SystemPhase from,
+            SystemPhase to,
+            SystemTrigger trigger,
+            DateTime occurredUtc,
+            long sequence)
         {
             From = from;
             To = to;
             Trigger = trigger;
             OccurredUtc = occurredUtc;
+            Sequence = sequence;
         }
     }
 
@@ -66,6 +86,9 @@ namespace Esam.Domain.Control
         private SystemPhase _phase;
         private DateTime _phaseEnteredUtc;
 
+        /// <summary>전이 순번. 락 안에서만 증가시킨다.</summary>
+        private long _sequence;
+
         /// <summary>현재 운전 단계.</summary>
         public SystemPhase Phase
         {
@@ -99,6 +122,12 @@ namespace Esam.Domain.Control
         }
 
         /// <summary>상태 전이가 발생하면 발생하는 이벤트.</summary>
+        /// <remarks>
+        /// <b>알림 순서는 전이 순서를 보장하지 않는다.</b> 이벤트를 락 밖에서
+        /// 발생시키기 때문이다. 순서가 필요하면
+        /// <see cref="PhaseChangedEventArgs.Sequence"/> 로 판정하고,
+        /// 현재 값만 필요하면 <see cref="Phase"/> 를 읽는다.
+        /// </remarks>
         public event EventHandler<PhaseChangedEventArgs> PhaseChanged;
 
         /// <summary>상태머신을 생성한다.</summary>
@@ -138,6 +167,7 @@ namespace Esam.Domain.Control
             SystemPhase previous;
             SystemPhase next;
             DateTime enteredUtc;
+            long sequence;
 
             // 판정과 대입이 하나의 원자 단위여야 한다.
             // 나눠 놓으면 두 스레드가 같은 현재 단계를 읽고 서로 다른 다음 단계를 쓴다.
@@ -154,16 +184,24 @@ namespace Esam.Domain.Control
                 enteredUtc = _clock.UtcNow;
                 _phase = next;
                 _phaseEnteredUtc = enteredUtc;
+
+                // 순번은 락 안에서 매긴다. 이벤트 도착 순서가 뒤집혀도
+                // 구독자가 어느 것이 나중 전이인지 판정할 수 있다.
+                sequence = ++_sequence;
             }
 
             // 이벤트는 락 밖에서 발생시킨다.
             // 구독자가 Fire 를 다시 호출하면(예: 인터록 해제 → 자동 재요청)
             // 락 안에서는 재진입이 되어 상태가 꼬이거나, 다른 락을 잡으면 교착이 된다.
+            //
+            // 그 대가로 알림 순서가 전이 순서와 달라질 수 있다.
+            // 순번을 함께 실어 구독자가 판정할 수 있게 한다.
             EventHandler<PhaseChangedEventArgs> handler = PhaseChanged;
 
             if (handler != null)
             {
-                handler(this, new PhaseChangedEventArgs(previous, next, trigger, enteredUtc));
+                handler(this, new PhaseChangedEventArgs(
+                    previous, next, trigger, enteredUtc, sequence));
             }
 
             return true;

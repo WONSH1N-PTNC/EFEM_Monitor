@@ -251,14 +251,14 @@ namespace Esam.Tests
             SystemStateMachine sm = Create();
             DriveTo(sm, SystemPhase.Ready);
 
-            List<SystemPhase> observed = new List<SystemPhase>();
+            List<PhaseChangedEventArgs> observed = new List<PhaseChangedEventArgs>();
             object gate = new object();
 
             sm.PhaseChanged += (sender, e) =>
             {
                 lock (gate)
                 {
-                    observed.Add(e.To);
+                    observed.Add(e);
                 }
             };
 
@@ -267,11 +267,44 @@ namespace Esam.Tests
                 sm.Fire(i % 2 == 0 ? SystemTrigger.AutoRequested : SystemTrigger.AutoStopRequested);
             });
 
-            // 전이 횟수만큼만 이벤트가 발생했고, 마지막 이벤트가 최종 상태와 같아야 한다.
+            // ★ "마지막에 도착한 이벤트" 로 판정하면 안 된다.
+            //
+            // 이벤트는 락 밖에서 발생시킨다(구독자가 Fire 를 재호출할 때의 재진입·교착 방지).
+            // 그래서 두 스레드가 A→B, B→A 로 전이하면 알림은 반대 순서로 도착할 수 있다.
+            // 종전 단정은 그 사실을 몰랐고, 우연히 통과하다가 이번에 드러났다.
+            //
+            // 보장되는 것은 "순번이 가장 큰 전이가 마지막으로 적용된 전이" 라는 점이다.
+            // 순번은 락 안에서 매기므로 전이 순서와 정확히 일치한다.
             lock (gate)
             {
                 Assert.NotEmpty(observed);
-                Assert.Equal(sm.Phase, observed[observed.Count - 1]);
+
+                PhaseChangedEventArgs latest = observed[0];
+
+                foreach (PhaseChangedEventArgs e in observed)
+                {
+                    if (e.Sequence > latest.Sequence)
+                    {
+                        latest = e;
+                    }
+                }
+
+                Assert.Equal(sm.Phase, latest.To);
+
+                // 순번은 1부터 빠짐없이 증가한다. 전이 횟수와 이벤트 수가 같아야 한다.
+                List<long> sequences = new List<long>();
+
+                foreach (PhaseChangedEventArgs e in observed)
+                {
+                    sequences.Add(e.Sequence);
+                }
+
+                sequences.Sort();
+
+                for (int i = 0; i < sequences.Count; i++)
+                {
+                    Assert.Equal(i + 1, sequences[i]);
+                }
             }
         }
 

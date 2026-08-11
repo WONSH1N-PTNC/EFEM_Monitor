@@ -18,10 +18,15 @@
     <DockPanel LastChildFill="True">
 
         <!--
-            배너를 최상단에 도킹한다. 스크롤되지 않고 항상 보이는 자리여야 한다.
-            안전 기능이 동작하지 않는 사실을 탭 안쪽에 숨기면 아무도 보지 않는다.
+            배너를 최하단에 도킹한다.
+
+            상태 표시줄 자리라 대시보드 상단의 장비 상태·알람 티커와 경쟁하지 않는다.
+            상단에 두면 화면이 열릴 때 대시보드 전체가 아래로 밀려 배치가 흔들린다.
+
+            중요한 것은 자리보다 <b>항상 보인다</b>는 점이다. 스크롤 밖으로 나가거나
+            탭 안쪽에 숨지 않는다. 안전 기능이 동작하지 않는 사실을 감추면 아무도 보지 않는다.
         -->
-        <views:SystemBannerView x:Name="Banner" DockPanel.Dock="Top" />
+        <views:SystemBannerView x:Name="Banner" DockPanel.Dock="Bottom" />
 
         <views:DashboardView x:Name="Dashboard" />
     </DockPanel>

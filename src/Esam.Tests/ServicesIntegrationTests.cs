@@ -2321,7 +2321,16 @@ namespace Esam.Tests
             plc.SetEmo(false);
             PollAll(runtime);
 
-            // SafeStop 이 풀리면 Ready 가 아니라 Fault 로 간다.
+            // ★ 입력이 풀려도 그것만으로는 해제되지 않는다.
+            // IL-02 는 Manual 래치다. 원인 확인 없이 자동 재가동되면 안 되기 때문이다.
+            Assert.Equal(SystemPhase.SafeStop, runtime.Engine.StateMachine.Phase);
+            Assert.True(runtime.Interlock.IsTripped);
+
+            // 작업자가 Reset 해야 풀린다.
+            runtime.Interlock.Reset("IL-02");
+            PollAll(runtime);
+
+            // 그때도 Ready 가 아니라 Fault 로 간다.
             // 물리 안전장치가 동작한 뒤에는 밸브의 기계적 원점을 신뢰할 수 없다.
             Assert.Equal(SystemPhase.Fault, runtime.Engine.StateMachine.Phase);
         }
