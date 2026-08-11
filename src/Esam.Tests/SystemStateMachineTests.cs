@@ -291,7 +291,11 @@ namespace Esam.Tests
 
                 Assert.Equal(sm.Phase, latest.To);
 
-                // 순번은 1부터 빠짐없이 증가한다. 전이 횟수와 이벤트 수가 같아야 한다.
+                // 순번은 빠짐없이 증가한다. 전이 1건당 이벤트 1건이므로 구멍이 없어야 한다.
+                //
+                // 1 부터 시작한다고 단정하면 안 된다. DriveTo 가 구독 전에
+                // Start·InitCompleted·HomingCompleted 3건을 이미 소비했다.
+                // 관찰 구간의 첫 순번을 기준으로 연속인지만 본다.
                 List<long> sequences = new List<long>();
 
                 foreach (PhaseChangedEventArgs e in observed)
@@ -303,8 +307,11 @@ namespace Esam.Tests
 
                 for (int i = 0; i < sequences.Count; i++)
                 {
-                    Assert.Equal(i + 1, sequences[i]);
+                    Assert.Equal(sequences[0] + i, sequences[i]);
                 }
+
+                // 관찰 구간 이전의 전이(DriveTo)가 순번을 소비했으므로 1 보다 크다.
+                Assert.True(sequences[0] > 1);
             }
         }
 
