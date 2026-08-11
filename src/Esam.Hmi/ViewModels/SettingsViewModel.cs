@@ -315,13 +315,42 @@ namespace Esam.Hmi.ViewModels
                 return;
             }
 
-            // ── 통신 구성을 파일에 반영하고 검증한다 ────────────────────────────
-            for (int i = 0; i < Ports.Count && i < map.Ports.Count; i++)
+            // ── 통신 구성을 사본에 반영하고 검증한다 ────────────────────────────
+            //
+            // ★ 살아 있는 맵(runtime.Map)을 고치지 않는다.
+            //
+            // 예전에는 여기서 map 을 직접 고친 뒤 검증하고, 실패하면 Load() 로
+            // "되돌린다" 고 적어 두었다. 되돌아가지 않는다. Load() 는 이미 고쳐진
+            // 그 맵을 다시 읽으므로, 화면에 잘못된 값을 확정해 주는 셈이었다.
+            // 게다가 작업자가 입력한 값까지 지워 무엇을 고치려 했는지도 사라졌다.
+            //
+            // 적용에 성공하면 재조립이 파일을 다시 읽는다. 따라서 살아 있는 맵을
+            // 만질 이유가 애초에 없다. 사본에만 반영하면 실패해도 되돌릴 것이 없다.
+            ConfigLoadResult clone = CommunicationConfigLoader.LoadFromJson(
+                CommunicationConfigLoader.ToJson(map));
+
+            if (!clone.IsSuccess)
             {
-                Ports[i].ApplyTo(map.Ports[i]);
+                // 현재 맵을 그대로 직렬화한 것이 검증을 통과하지 못하는 상태.
+                // 화면 입력과 무관한 문제이므로 그대로 드러낸다.
+                foreach (string error in clone.Errors)
+                {
+                    Errors.Add(error);
+                }
+
+                StatusText = "현재 통신 구성 자체가 검증을 통과하지 못합니다.";
+                HasError = true;
+                return;
             }
 
-            string json = CommunicationConfigLoader.ToJson(map);
+            DeviceMap edited = clone.Map;
+
+            for (int i = 0; i < Ports.Count && i < edited.Ports.Count; i++)
+            {
+                Ports[i].ApplyTo(edited.Ports[i]);
+            }
+
+            string json = CommunicationConfigLoader.ToJson(edited);
             ConfigLoadResult verified = CommunicationConfigLoader.LoadFromJson(json);
 
             if (!verified.IsSuccess)
@@ -334,9 +363,8 @@ namespace Esam.Hmi.ViewModels
                 StatusText = "통신 구성 검증에 실패해 저장하지 않았습니다.";
                 HasError = true;
 
-                // 화면 값을 되돌린다. 메모리의 map 을 이미 고쳤으므로 그대로 두면
-                // 다음 폴링이 잘못된 설정으로 돌아간다.
-                Load();
+                // 화면 입력은 그대로 남긴다. 무엇을 고치려 했는지 보여야
+                // 사유를 읽고 그 자리에서 바로잡을 수 있다.
                 return;
             }
 

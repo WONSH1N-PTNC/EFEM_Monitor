@@ -42,6 +42,38 @@
     <ProjectReference Include="..\Esam.Domain\Esam.Domain.csproj" />
     <ProjectReference Include="..\Esam.Communication\Esam.Communication.csproj" />
     <ProjectReference Include="..\Esam.Services\Esam.Services.csproj" />
+
+    <!--
+      ★ ViewModel 을 테스트하기 위해 HMI 를 참조한다.
+
+      화면 코드를 테스트에서 참조하는 것이 일반적이지는 않다. 그래도 넣는 이유는,
+      이 프로젝트의 ViewModel 이 단순 표시 로직이 아니라 판단을 들고 있기 때문이다.
+      입력 문자열 파싱, 쓰기 잠금 관문, 저장 전 검증 경유가 모두 여기에 있다.
+      셋 다 틀렸을 때 조용히 잘못된 설정값으로 운전에 들어가는 종류의 결함이다.
+
+      Window·UserControl 은 테스트하지 않는다. ViewModel 만 대상으로 한다.
+    -->
+    <ProjectReference Include="..\Esam.Hmi\Esam.Hmi.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      ★ WPF 어셈블리를 명시적으로 참조한다.
+
+      Esam.Hmi 는 net472 WPF 라 클래식 csproj 형식이고, SDK 스타일 프로젝트에는
+      net472 용 <UseWPF> 가 없다(.NET Core 3.0 이상 전용).
+      즉 이 참조가 없으면 ICommand·CommandManager 를 해석하지 못해
+      ViewModel 을 다루는 코드가 컴파일되지 않는다.
+
+      System.Xaml 은 직접 쓰지 않지만 PresentationFramework 가 요구한다.
+
+      System.Xml 등 net472 기본 어셈블리는 SDK 가 이미 넣으므로 적지 않는다.
+      중복으로 적으면 항목이 두 번 들어가 경고가 난다.
+    -->
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="System.Xaml" />
   </ItemGroup>
 
 </Project>
