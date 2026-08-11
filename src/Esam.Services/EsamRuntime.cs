@@ -151,6 +151,16 @@ namespace Esam.Services
         /// <summary>인터록 실효 실패를 이미 보고했는지 여부. 매 사이클 반복 보고를 막는다.</summary>
         private bool _interlockEffectReported;
 
+        /// <summary>
+        /// 안전 경로 장애로 SafeStop 을 올렸는지 여부.
+        /// </summary>
+        /// <remarks>
+        /// 누가 올린 정지인지 기억해야 누가 풀 수 있는지 정할 수 있다.
+        /// 인터록이 올린 정지는 인터록 해소로 풀리지만, 장애로 올린 정지는
+        /// 인터록과 무관하므로 인터록 상태로 풀어서는 안 된다.
+        /// </remarks>
+        private bool _safeStopByRuntimeFault;
+
         /// <summary>시각 제공자.</summary>
         private IClock _clock = SystemClock.Instance;
 
@@ -259,6 +269,35 @@ namespace Esam.Services
             {
                 _warningsAcknowledged = true;
             }
+        }
+
+        /// <summary>
+        /// 안전 경로 장애로 올린 SafeStop 을 해제한다. 작업자가 원인을 확인한 뒤 호출한다.
+        /// </summary>
+        /// <returns>해제할 장애가 있었으면 true.</returns>
+        /// <remarks>
+        /// <para>단계를 Ready 로 되돌리지 않는다. <c>SafeStopCleared</c> 는 Fault 로 가고,
+        /// 거기서 재기동하려면 초기화와 원점 복귀를 다시 거쳐야 한다.
+        /// 안전 경로가 동작하지 못했던 뒤에는 밸브의 기계적 원점을 신뢰할 수 없다.</para>
+        /// <para>진단 카운터도 함께 초기화한다. 남겨 두면 다음 장애가 이전 누적 위에
+        /// 얹혀 임계를 즉시 넘긴다.</para>
+        /// </remarks>
+        public bool ResetRuntimeFault()
+        {
+            if (!_safeStopByRuntimeFault)
+            {
+                return false;
+            }
+
+            _safeStopByRuntimeFault = false;
+            _diagnostics.Reset();
+
+            if (Engine != null && Engine.StateMachine.Phase == SystemPhase.SafeStop)
+            {
+                Engine.StateMachine.Fire(SystemTrigger.SafeStopCleared);
+            }
+
+            return true;
         }
 
         /// <summary>구성 경고를 추가한다. 어느 스레드에서든 호출할 수 있다.</summary>
@@ -901,7 +940,11 @@ namespace Esam.Services
                 AddWarning(ConfigWarning.Blocking(
                     "RUN-" + ((int)e.Kind).ToString(CultureInfo.InvariantCulture),
                     e.Detail,
-                    "원인을 확인한 뒤 재기동하십시오."));
+                    "원인을 확인한 뒤 ResetRuntimeFault 로 해제하십시오."));
+
+                // 인터록 판정이 이 정지를 풀지 못하게 표시한다.
+                // 이 표시가 없으면 다음 사이클의 정상 판정이 곧바로 해제한다.
+                _safeStopByRuntimeFault = true;
 
                 Engine.StateMachine.Fire(SystemTrigger.SafeStopRaised);
                 Engine.ParkActuators("안전 경로 장애: " + e.Detail);
@@ -1020,6 +1063,23 @@ namespace Esam.Services
             // 발동이 모두 해소되었다. 단계에 맞는 해제 트리거를 낸다.
             if (phase == SystemPhase.SafeStop)
             {
+                // ★ 인터록이 올리지 않은 SafeStop 은 인터록이 풀 수 없다.
+                //
+                // 안전 경로 장애(판정 예외·지령 실패·판정 불가)로 올린 SafeStop 을
+                // "인터록이 발동하지 않았다" 는 이유로 풀면, 장애를 감지한 바로 다음
+                // 사이클에 스스로 해제된다. 그리고 그 사이클에서 판정 불가 카운터까지
+                // 0 으로 되돌아가므로 다시 올릴 수도 없다.
+                //
+                // 결과는 "장애를 알렸고 즉시 잊었다" 다. 화면에는 차단 경고만 남고
+                // 단계는 내려간다. 원인은 그대로인데 아무도 보지 않는다.
+                //
+                // 장애로 올린 정지는 작업자가 원인을 확인하고 ResetRuntimeFault 를
+                // 호출할 때까지 유지한다.
+                if (_safeStopByRuntimeFault)
+                {
+                    return;
+                }
+
                 machine.Fire(SystemTrigger.SafeStopCleared);
             }
             else if (phase == SystemPhase.Interlocked)

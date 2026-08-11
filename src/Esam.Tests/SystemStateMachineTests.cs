@@ -87,6 +87,38 @@ namespace Esam.Tests
         }
 
         [Fact]
+        public void AutoControl에서_Stop은_Idle로_가고_AutoStopRequested는_Ready로_간다()
+        {
+            // ★ 두 트리거를 구분하지 않아 종료가 Ready 에서 멈추던 결함의 회귀 방지.
+            //
+            // Ready 로 남으면 다음 기동에서 Start 트리거가 무시되고
+            // 초기화·원점 복귀를 건너뛴 채 재개된다. 밸브의 기계적 원점이
+            // 미확정인 상태로 운전하는 것이다.
+            //
+            // 이 구분을 단정하는 테스트가 없어서, EsamRuntime.Stop 의 문서가
+            // "Idle 복귀" 라고 적어 둔 채 실제로는 Ready 에 머물러 있었다.
+
+            // 자동 제어만 끈다 → 대기 상태로 남는다
+            SystemStateMachine auto = Create();
+            DriveTo(auto, SystemPhase.AutoControl);
+            Assert.Equal(SystemPhase.AutoControl, auto.Phase);
+
+            Assert.True(auto.Fire(SystemTrigger.AutoStopRequested));
+            Assert.Equal(SystemPhase.Ready, auto.Phase);
+
+            // 운전을 종료한다 → 처음부터 다시 시작해야 한다
+            SystemStateMachine stop = Create();
+            DriveTo(stop, SystemPhase.AutoControl);
+
+            Assert.True(stop.Fire(SystemTrigger.Stop));
+            Assert.Equal(SystemPhase.Idle, stop.Phase);
+
+            // Idle 에서는 Start 가 받아들여진다. Ready 였다면 무시된다.
+            Assert.True(stop.Fire(SystemTrigger.Start));
+            Assert.Equal(SystemPhase.Init, stop.Phase);
+        }
+
+        [Fact]
         public void SafeStop이_해제되면_Ready가_아니라_Fault로_간다()
         {
             // 비상정지 후 자동으로 운전 가능 상태가 되면 안 된다. 원인 확인과 Reset 을 강제한다.

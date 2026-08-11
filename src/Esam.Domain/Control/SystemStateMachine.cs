@@ -237,12 +237,21 @@ namespace Esam.Domain.Control
                     return trigger == SystemTrigger.Stop ? SystemPhase.Idle : current;
 
                 case SystemPhase.AutoControl:
-                    if (trigger == SystemTrigger.AutoStopRequested || trigger == SystemTrigger.Stop)
+                    // 두 트리거를 구분한다. 구분하지 않으면 종료가 Ready 에서 멈춘다.
+                    //
+                    //   AutoStopRequested — 자동 제어만 끈다. 장비는 대기 상태로 남는다
+                    //   Stop             — 운전을 종료한다. 처음부터 다시 시작해야 한다
+                    //
+                    // 종전에는 둘 다 Ready 로 보냈다. 그러면 프로그램을 종료했다가
+                    // 다시 켰을 때 단계가 Ready 로 남아 Start 트리거가 무시되고,
+                    // 초기화와 원점 복귀를 건너뛴 채 재개된다.
+                    // 밸브의 기계적 원점이 미확정인 상태로 운전하는 것이다.
+                    if (trigger == SystemTrigger.AutoStopRequested)
                     {
                         return SystemPhase.Ready;
                     }
 
-                    return current;
+                    return trigger == SystemTrigger.Stop ? SystemPhase.Idle : current;
 
                 case SystemPhase.Interlocked:
                     // 인터록 해제 후에도 자동으로 운전에 복귀하지 않는다.

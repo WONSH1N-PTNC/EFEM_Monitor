@@ -603,8 +603,10 @@ namespace Esam.Tests
             double truePv;
             Assert.True(runtime.Plant.TryGetTruePressure("S2-1", out truePv));
 
-            // 허용오차는 인코딩 양자화(1 LSB)에서만 나온다.
-            Assert.Equal(truePv, reading.Pa, 1);
+            // 허용오차는 인코딩 양자화(1 LSB)와 센서 노이즈에서 나온다.
+            // 센서 2 의 노이즈 표준편차는 0.8 Pa 이므로 4 Pa 는 5σ 다.
+            // 스케일이 어긋나면(예: 10배) 20 Pa 가 200 Pa 로 읽히므로 이 폭으로도 확실히 잡힌다.
+            Assert.InRange(reading.Pa, truePv - 4.0, truePv + 4.0);
 
             // 밸브 닫힘·팬 정지 상태이므로 플랜트 base = +20 Pa 부근이어야 한다.
             // 참값 자체가 엉뚱하면 위 대조는 둘이 함께 틀려도 통과한다.
@@ -661,7 +663,7 @@ namespace Esam.Tests
             // 값 자체는 참고용으로 남긴다. 0 으로 지우면 트렌드에 가짜 급락이 기록된다.
             double truePv;
             Assert.True(runtime.Plant.TryGetTruePressure("S2-1", out truePv));
-            Assert.Equal(truePv, degraded.Pa, 1);
+            Assert.InRange(degraded.Pa, truePv - 4.0, truePv + 4.0);
 
             // 같은 버스의 다른 센서는 영향을 받지 않는다.
             Assert.Equal(Quality.Good, runtime.Store.Current.FindPressure("S2-2").Quality);
@@ -1466,6 +1468,64 @@ namespace Esam.Tests
         }
 
         [Fact]
+        public void 장애로_올린_SafeStop은_정상_판정으로_풀리지_않는다()
+        {
+            // ★ 회귀 방지. 인터록이 올리지 않은 SafeStop 을 인터록이 풀고 있었다.
+            //
+            // 판정 불가가 계속되어 SafeStop 으로 갔는데, 바로 다음 사이클의 판정이
+            // "인터록 미발동" 이므로 SafeStopCleared 를 내서 Fault 로 내려갔다.
+            // 그리고 그 사이클에서 판정 불가 카운터까지 0 으로 되돌아가므로
+            // 다시 올릴 수도 없었다. 장애를 알리고 즉시 잊는 동작이다.
+            EsamRuntime runtime = CreateRuntime();
+            AdvanceToReady(runtime);
+            runtime.Engine.RequestAuto();
+
+            RunLoop(runtime, 20);
+
+            // 센서 3 전량을 분리해 판정 불가를 만든다.
+            SimulatedModbusTransport bus = Transport(runtime, "CH1");
+
+            for (byte slave = 9; slave <= 13; slave++)
+            {
+                Assert.True(bus.DetachSlave(slave));
+            }
+
+            for (int i = 0; i < runtime.Diagnostics.BlindCycleThreshold + 4; i++)
+            {
+                PollAll(runtime);
+                _clock.AdvanceMs(250);
+            }
+
+            Assert.Equal(SystemPhase.SafeStop, runtime.Engine.StateMachine.Phase);
+            Assert.Contains(runtime.Warnings, w => w.Code == "RUN-3");
+
+            // 센서를 되살린다. 인터록은 이제 정상 판정을 하지만
+            // 장애로 올린 정지는 그것으로 풀리지 않는다.
+            for (byte slave = 9; slave <= 13; slave++)
+            {
+                bus.AddSlave(new SimulatedPressureSensor(
+                    slave, runtime.Plant, "S3-" + (slave - 8)));
+            }
+
+            for (int i = 0; i < 20; i++)
+            {
+                PollAll(runtime);
+                _clock.AdvanceMs(250);
+            }
+
+            Assert.Equal(SystemPhase.SafeStop, runtime.Engine.StateMachine.Phase);
+
+            // 작업자가 원인을 확인하고 해제해야 내려간다.
+            Assert.True(runtime.ResetRuntimeFault());
+
+            // Ready 가 아니라 Fault 다. 원점 복귀를 다시 거쳐야 한다.
+            Assert.Equal(SystemPhase.Fault, runtime.Engine.StateMachine.Phase);
+
+            // 두 번 호출하면 해제할 것이 없다.
+            Assert.False(runtime.ResetRuntimeFault());
+        }
+
+        [Fact]
         public void Stop_후_재시작하면_원점_복귀를_다시_거친다()
         {
             // Stop 이 단계를 되돌리지 않으면 Start 트리거가 무시되고
@@ -1867,12 +1927,27 @@ namespace Esam.Tests
         private static void LoseExhaust(EsamRuntime runtime)
         {
             runtime.Plant.Options.Sensor3BasePa = 200.0;
+
+            // ★ 목표값만 바꾸면 센서가 읽는 값은 그대로다.
+            // PlantModel 의 1차 지연은 Advance 를 불러야 움직이고,
+            // 시뮬레이션 전송 계층의 자동 진행은 꺼져 있다.
+            //
+            // 이 호출이 없으면 "배기를 상실시켰다" 고 적어 놓고 압력은 -177 Pa 에
+            // 그대로 머문다. IL-01 임계값 0 Pa 를 넘지 못해 인터록이 발동하지 않고,
+            // 그 뒤의 모든 단정이 무의미해진다.
+            //
+            // 헬퍼가 진행까지 책임진다. 호출부 17곳에서 매번 기억해야 하는
+            // 규약으로 두면 언젠가 또 빠진다.
+            runtime.Plant.Advance(2.0);
         }
 
         /// <summary>배기를 정상 상태로 되돌린다.</summary>
         private static void RestoreExhaust(EsamRuntime runtime)
         {
             runtime.Plant.Options.Sensor3BasePa = -50.0;
+
+            // 상동. 복구도 실제로 값이 돌아와야 의미가 있다.
+            runtime.Plant.Advance(2.0);
         }
 
         [Fact]

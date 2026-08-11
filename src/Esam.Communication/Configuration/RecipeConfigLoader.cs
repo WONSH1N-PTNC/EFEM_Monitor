@@ -206,8 +206,27 @@ namespace Esam.Communication.Configuration
                 CheckRange(device, setting.DeviceId, "상한", setting.HighLimitPa, errors);
             }
 
-            // 하드웨어에 있는데 레시피에 없는 압력센서는 경고다.
-            // 그 센서로 제어하지 않는 구성일 수 있으므로 막지는 않는다.
+            // 레시피가 다루는 장치 종류를 먼저 모은다.
+            //
+            // ★ "압력센서 드라이버를 쓰는 모든 장치" 를 대상으로 삼으면 안 된다.
+            // 블로워 압력센서(PSM)도 같은 드라이버를 쓰지만 제어 기준이 아니라
+            // 감시 전용이고, ECID 항목도 아니다. 레시피에 없는 것이 정상이다.
+            //
+            // 그것까지 경고로 내면 배포 구성에서 항상 경고가 남는다.
+            // 항상 뜨는 경고는 읽히지 않고, 그러면 진짜 누락도 함께 묻힌다.
+            HashSet<string> recipeTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (DeviceInstanceDefinition device in map.Devices)
+            {
+                if (device != null && !string.IsNullOrEmpty(device.Id)
+                    && !string.IsNullOrEmpty(device.Type) && covered.Contains(device.Id))
+                {
+                    recipeTypes.Add(device.Type);
+                }
+            }
+
+            // 레시피가 다루는 종류인데 빠진 장치는 경고다.
+            // 같은 종류의 형제 장치가 레시피에 있다면 빠진 쪽은 실수일 가능성이 높다.
             foreach (DeviceInstanceDefinition device in map.Devices)
             {
                 if (device == null || !device.Enabled || string.IsNullOrEmpty(device.Id))
@@ -218,6 +237,11 @@ namespace Esam.Communication.Configuration
                 DeviceTypeDefinition type = map.FindType(device.Type);
 
                 if (type == null || type.Driver != DriverNames.PressureSensor)
+                {
+                    continue;
+                }
+
+                if (!recipeTypes.Contains(device.Type))
                 {
                     continue;
                 }
