@@ -368,6 +368,9 @@ namespace Esam.Tests
             RuntimeOptions options = new RuntimeOptions();
             options.Transport = TransportMode.Simulation;
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.Recipe = BuildRecipe(resolved);
 
             _runtime = Track(EsamRuntime.Create(map ?? CreateMap(), resolved, options, _clock));
@@ -514,6 +517,9 @@ namespace Esam.Tests
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
 
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
+
             InvalidOperationException ex = Assert.Throws<InvalidOperationException>(
                 () => EsamRuntime.Create(broken, CreateControl(), options, _clock));
 
@@ -557,6 +563,9 @@ namespace Esam.Tests
 
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.InterlockRules = rules;
             options.Recipe = BuildRecipe(control);
 
@@ -763,6 +772,9 @@ namespace Esam.Tests
 
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.Recipe = BuildRecipe(control);
 
             _runtime = Track(EsamRuntime.Create(CreateMap(), control, options, _clock));
@@ -1589,6 +1601,9 @@ namespace Esam.Tests
 
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.InterlockRules = rules;
             options.Recipe = BuildRecipe(control);
 
@@ -1629,6 +1644,9 @@ namespace Esam.Tests
 
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.InterlockRules = rules;
             options.Recipe = BuildRecipe(control);
 
@@ -1672,6 +1690,9 @@ namespace Esam.Tests
 
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.Recipe = recipe;
 
             _runtime = Track(EsamRuntime.Create(CreateMap(), control, options, _clock));
@@ -1704,6 +1725,9 @@ namespace Esam.Tests
 
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.Recipe = recipe;
 
             _runtime = Track(EsamRuntime.Create(CreateMap(), control, options, _clock));
@@ -1735,6 +1759,9 @@ namespace Esam.Tests
 
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.Recipe = recipe;
 
             _runtime = Track(EsamRuntime.Create(CreateMap(), control, options, _clock));
@@ -1755,6 +1782,9 @@ namespace Esam.Tests
 
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.RecipePath = null;
 
             _runtime = Track(EsamRuntime.Create(CreateMap(), control, options, _clock));
@@ -1782,6 +1812,9 @@ namespace Esam.Tests
             // 조용히 넘어가면 통로별로 값을 넣었다고 믿은 채 공통값으로 운전하게 된다.
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.RecipePath = null;
 
             _runtime = Track(EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock));
@@ -1805,6 +1838,9 @@ namespace Esam.Tests
 
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.Recipe = recipe;
 
             _runtime = Track(EsamRuntime.Create(CreateMap(), control, options, _clock));
@@ -2170,6 +2206,9 @@ namespace Esam.Tests
 
             RuntimeOptions options = new RuntimeOptions();
             options.Sensor1Ids = Sensor1Ids;
+
+            // 시간을 테스트가 통제한다. 실시간으로 흐르면 결과가 실행 속도에 따라 달라진다.
+            options.AdvancePlantInRealTime = false;
             options.AlarmRules = rules;
             options.Recipe = BuildRecipe(alarmControl);
 
@@ -2254,6 +2293,61 @@ namespace Esam.Tests
             });
 
             return map;
+        }
+
+        [Fact]
+        public void 실시간_진행을_켜면_플랜트_시계를_한_포트만_돌린다()
+        {
+            // ★ 회귀 방지. 화면에서 밸브가 움직이지 않아 원점 복귀가 끝나지 않았다.
+            // AutoAdvancePlant 가 꺼져 있어 폴링만 돌고 플랜트는 멈춰 있었다.
+            //
+            // 그렇다고 전 포트에서 켜면 안 된다. 포트가 둘인데 둘 다 자기 경과 시간만큼
+            // 진행시키면 플랜트 시간이 실제의 두 배로 흐르고,
+            // 밸브 슬루율·1차 지연 시정수가 전부 절반으로 보인다.
+            RuntimeOptions options = new RuntimeOptions();
+            options.Sensor1Ids = Sensor1Ids;
+            options.Recipe = BuildRecipe(CreateControl());
+
+            // 기본값이 true 여야 한다. 화면에서 그냥 띄우면 동작해야 하기 때문이다.
+            Assert.True(options.AdvancePlantInRealTime);
+
+            _runtime = Track(EsamRuntime.Create(CreateMap(), CreateControl(), options, _clock));
+            _runtime.AcknowledgeWarnings();
+
+            int driving = 0;
+
+            foreach (ModbusPortWorker worker in _runtime.Workers)
+            {
+                SimulatedModbusTransport transport =
+                    _runtime.FindTransport(worker.PortId) as SimulatedModbusTransport;
+
+                Assert.NotNull(transport);
+
+                if (transport.Options.AutoAdvancePlant)
+                {
+                    driving++;
+                }
+            }
+
+            Assert.Equal(2, _runtime.Workers.Count);
+            Assert.Equal(1, driving);
+        }
+
+        [Fact]
+        public void 테스트_구성은_플랜트를_실시간으로_진행시키지_않는다()
+        {
+            // 실시간으로 흐르면 결과가 실행 속도에 따라 달라져 회귀 검증에 쓸 수 없다.
+            // 시간은 테스트가 Plant.Advance 로 통제한다.
+            EsamRuntime runtime = CreateRuntime();
+
+            foreach (ModbusPortWorker worker in runtime.Workers)
+            {
+                SimulatedModbusTransport transport =
+                    runtime.FindTransport(worker.PortId) as SimulatedModbusTransport;
+
+                Assert.NotNull(transport);
+                Assert.False(transport.Options.AutoAdvancePlant);
+            }
         }
 
         [Fact]

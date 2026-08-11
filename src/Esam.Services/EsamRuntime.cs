@@ -92,6 +92,19 @@ namespace Esam.Services
         /// </remarks>
         public bool PreHomeValves { get; set; }
 
+        /// <summary>
+        /// 시뮬레이션 플랜트를 실제 경과 시간으로 진행시킬지 여부. 기본값 true.
+        /// </summary>
+        /// <remarks>
+        /// <para><b>테스트는 false 로 둔다.</b> 실시간으로 흐르면 결과가 실행 속도에 따라
+        /// 달라져 회귀 검증에 쓸 수 없다. 테스트는 <c>PlantModel.Advance</c> 를 직접
+        /// 호출해 시간을 통제한다.</para>
+        /// <para>반대로 화면에서는 반드시 켜야 한다. 꺼 두면 폴링만 돌고 밸브는
+        /// 움직이지 않아 원점 복귀가 끝나지 않는다. Ready 에 도달하지 못해
+        /// 자동 운전 버튼이 영원히 비활성으로 남는다.</para>
+        /// </remarks>
+        public bool AdvancePlantInRealTime { get; set; }
+
         /// <summary>기본값으로 초기화한다.</summary>
         public RuntimeOptions()
         {
@@ -100,6 +113,10 @@ namespace Esam.Services
             SimulationSeed = 20260805;
             AlarmRulesPath = System.IO.Path.Combine("config", "alarms.json");
             RecipePath = System.IO.Path.Combine("config", "recipe.json");
+
+            // 기본값은 실시간이다. 화면에서 그냥 띄우면 동작해야 한다.
+            // 테스트가 명시적으로 끈다.
+            AdvancePlantInRealTime = true;
         }
     }
 
@@ -659,7 +676,8 @@ namespace Esam.Services
                 }
 
                 IModbusTransport transport = options.Transport == TransportMode.Simulation
-                    ? BuildSimulatedTransport(port, devices)
+                    ? BuildSimulatedTransport(
+                        port, devices, options.AdvancePlantInRealTime && _transports.Count == 0)
                     : new SerialPortModbusTransport(port.Serial);
 
                 _transports[port.PortId] = transport;
@@ -720,13 +738,34 @@ namespace Esam.Services
         }
 
         /// <summary>시뮬레이션 전송 계층을 구성하고 슬레이브를 등록한다.</summary>
+        /// <param name="port">포트 정의.</param>
+        /// <param name="devices">이 포트의 디바이스 목록.</param>
+        /// <param name="drivesPlantClock">이 포트가 플랜트 시간을 진행시킬지 여부.</param>
+        /// <returns>전송 계층.</returns>
+        /// <remarks>
+        /// <para><b>플랜트를 진행시키는 포트는 하나뿐이다.</b> 포트가 둘인데 둘 다
+        /// 자기 경과 시간만큼 진행시키면 플랜트 시간이 실제의 두 배로 흐른다.
+        /// 밸브 슬루율·1차 지연 시정수가 전부 절반으로 보이게 된다.</para>
+        /// <para>진행 주체를 첫 포트로 고정한다. 폴링 주기가 가장 짧은 포트를 고르는
+        /// 방법도 있으나, 어느 쪽이든 <b>하나여야 한다</b>는 점이 본질이다.</para>
+        /// </remarks>
         private IModbusTransport BuildSimulatedTransport(
-            PortDefinition port, IList<DeviceInstanceDefinition> devices)
+            PortDefinition port, IList<DeviceInstanceDefinition> devices, bool drivesPlantClock)
         {
             Esam.Communication.Simulation.SimulationTransportOptions options =
                 new Esam.Communication.Simulation.SimulationTransportOptions();
 
             options.BaudRate = port.Serial.BaudRate;
+
+            // ★ 이 값이 false 면 플랜트가 멈춘 채로 폴링만 돈다.
+            //
+            // 밸브가 움직이지 않으니 원점 복귀가 끝나지 않고, Ready 에 도달하지 못해
+            // 자동 운전 버튼이 영원히 비활성으로 남는다. 화면은 정상으로 보이는데
+            // 장비만 기동하지 않는 상태다.
+            //
+            // 단위테스트는 false 로 두고 PlantModel.Advance 를 직접 호출한다.
+            // 실시간으로 흐르면 결과가 실행 속도에 따라 달라져 회귀 검증에 쓸 수 없다.
+            options.AutoAdvancePlant = drivesPlantClock;
 
             Esam.Communication.Simulation.SimulatedModbusTransport transport =
                 new Esam.Communication.Simulation.SimulatedModbusTransport(port.PortId, Plant, options);

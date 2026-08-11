@@ -20,7 +20,13 @@ namespace Esam.Communication.Simulation
     ///   <item><description><b>압력 1차 지연</b> — 챔버 부피로 인한 시정수.</description></item>
     ///   <item><description><b>측정 노이즈</b> — 수 Pa 제어에서 필터 설계의 근거.</description></item>
     /// </list>
-    /// <para>스레드 안전하지 않다. 시뮬레이션 스레드 1개에서만 조작한다.</para>
+    /// <para><b>스레드 안전하다.</b> 당초에는 "시뮬레이션 스레드 1개" 를 전제했으나,
+    /// 실제 배선에서는 포트 워커 여러 스레드가 각자의 전송 계층을 통해 같은 플랜트를 읽고 쓴다.
+    /// 포트마다 전송 계층이 다르므로 전송 계층의 락으로는 보호되지 않는다.</para>
+    /// <para>보호하지 않으면 한 스레드가 <see cref="Advance"/> 로 상태를 갱신하는 중에
+    /// 다른 스레드가 값을 읽어, 밸브 위치와 압력이 서로 다른 시점의 것으로 섞인다.
+    /// 시뮬레이션에서만 나타나는 문제이지만 그 결과를 근거로 제어를 검증하므로
+    /// 결함으로 이어진다.</para>
     /// </remarks>
     public sealed class PlantModel
     {
@@ -56,6 +62,15 @@ namespace Esam.Communication.Simulation
         // 나머지 조회 딕셔너리와 동일하게 대소문자를 무시해야 한다.
         // List.Contains 를 쓰면 S1 만 대소문자를 구분해 조용히 조회 실패하는 비대칭이 생긴다.
         private readonly HashSet<string> _sensor1Ids;
+
+        /// <summary>
+        /// 상태 보호용 락.
+        /// </summary>
+        /// <remarks>
+        /// 포트 워커 스레드가 각자의 전송 계층에서 이 모델을 건드린다.
+        /// 전송 계층의 락은 포트마다 다르므로 여기서 따로 보호해야 한다.
+        /// </remarks>
+        private readonly object _gate = new object();
 
         /// <summary>누적 시뮬레이션 시간 [초].</summary>
         public double ElapsedSec { get; private set; }
@@ -166,48 +181,51 @@ namespace Esam.Communication.Simulation
         /// <param name="dtSec">진행 시간 [초].</param>
         public void Advance(double dtSec)
         {
-            if (dtSec <= 0.0)
+            lock (_gate)
             {
-                return;
+                if (dtSec <= 0.0)
+                {
+                    return;
+                }
+
+                ElapsedSec += dtSec;
+
+                double valveSum = 0.0;
+                double fanSum = 0.0;
+
+                foreach (ChainState chain in _chains)
+                {
+                    AdvanceActuators(chain, dtSec);
+
+                    double valveRatio = ValveRatio(chain);
+                    double fanRatio = FanRatio(chain);
+
+                    valveSum += valveRatio;
+                    fanSum += fanRatio;
+
+                    double sensor2Target = _options.Sensor2BasePa
+                                           - (_options.Sensor2ValveGain * valveRatio)
+                                           - (_options.Sensor2FanGain * fanRatio);
+
+                    double sensor3Target = _options.Sensor3BasePa
+                                           - (_options.Sensor3ValveGain * valveRatio)
+                                           - (_options.Sensor3FanGain * fanRatio);
+
+                    chain.Sensor2Lag.Advance(sensor2Target, dtSec);
+                    chain.Sensor3Lag.Advance(sensor3Target, dtSec);
+                }
+
+                // 센서 1은 EFEM 내부 공통이므로 전 체인의 평균 배기량에 반응한다.
+                int count = _chains.Count;
+                double valveMean = count == 0 ? 0.0 : valveSum / count;
+                double fanMean = count == 0 ? 0.0 : fanSum / count;
+
+                double sensor1Target = _options.Sensor1BasePa
+                                       - (_options.Sensor1ValveGain * valveMean)
+                                       - (_options.Sensor1FanGain * fanMean);
+
+                _sensor1Lag.Advance(sensor1Target, dtSec);
             }
-
-            ElapsedSec += dtSec;
-
-            double valveSum = 0.0;
-            double fanSum = 0.0;
-
-            foreach (ChainState chain in _chains)
-            {
-                AdvanceActuators(chain, dtSec);
-
-                double valveRatio = ValveRatio(chain);
-                double fanRatio = FanRatio(chain);
-
-                valveSum += valveRatio;
-                fanSum += fanRatio;
-
-                double sensor2Target = _options.Sensor2BasePa
-                                       - (_options.Sensor2ValveGain * valveRatio)
-                                       - (_options.Sensor2FanGain * fanRatio);
-
-                double sensor3Target = _options.Sensor3BasePa
-                                       - (_options.Sensor3ValveGain * valveRatio)
-                                       - (_options.Sensor3FanGain * fanRatio);
-
-                chain.Sensor2Lag.Advance(sensor2Target, dtSec);
-                chain.Sensor3Lag.Advance(sensor3Target, dtSec);
-            }
-
-            // 센서 1은 EFEM 내부 공통이므로 전 체인의 평균 배기량에 반응한다.
-            int count = _chains.Count;
-            double valveMean = count == 0 ? 0.0 : valveSum / count;
-            double fanMean = count == 0 ? 0.0 : fanSum / count;
-
-            double sensor1Target = _options.Sensor1BasePa
-                                   - (_options.Sensor1ValveGain * valveMean)
-                                   - (_options.Sensor1FanGain * fanMean);
-
-            _sensor1Lag.Advance(sensor1Target, dtSec);
         }
 
         /// <summary>도메인 계층이 생성한 액추에이터 지령을 플랜트에 적용한다.</summary>
@@ -215,86 +233,89 @@ namespace Esam.Communication.Simulation
         /// <returns>지령 대상을 찾아 적용했으면 true.</returns>
         public bool ApplyCommand(ActuatorCommand command)
         {
-            if (command == null)
+            lock (_gate)
             {
-                return false;
-            }
-
-            ChainState chain;
-
-            switch (command.Kind)
-            {
-                case ActuatorCommandKind.SetValvePosition:
-                    if (!_byValveId.TryGetValue(command.DeviceId, out chain))
-                    {
-                        return false;
-                    }
-
-                    chain.ValveTargetPulse = Clamp(command.Value, 0.0, _options.ValveFullOpenPulse);
-                    return true;
-
-                case ActuatorCommandKind.CloseValve:
-                    if (!_byValveId.TryGetValue(command.DeviceId, out chain))
-                    {
-                        return false;
-                    }
-
-                    chain.ValveTargetPulse = 0.0;
-                    return true;
-
-                case ActuatorCommandKind.QuickStopValve:
-                    if (!_byValveId.TryGetValue(command.DeviceId, out chain))
-                    {
-                        return false;
-                    }
-
-                    // 즉시 정지는 현재 위치를 목표로 고정하는 것과 같다.
-                    chain.ValveTargetPulse = chain.ValvePulse;
-                    return true;
-
-                case ActuatorCommandKind.HomeValve:
-                    if (!_byValveId.TryGetValue(command.DeviceId, out chain))
-                    {
-                        return false;
-                    }
-
-                    chain.ValveTargetPulse = 0.0;
-                    chain.ValveHomeDone = true;
-                    return true;
-
-                case ActuatorCommandKind.SetFanRpm:
-                    if (!_byFanId.TryGetValue(command.DeviceId, out chain))
-                    {
-                        return false;
-                    }
-
-                    chain.FanTargetRpm = Clamp(command.Value, 0.0, _options.FanMaxRpm);
-                    return true;
-
-                case ActuatorCommandKind.StopFan:
-                    if (!_byFanId.TryGetValue(command.DeviceId, out chain))
-                    {
-                        return false;
-                    }
-
-                    chain.FanTargetRpm = 0.0;
-                    return true;
-
-                case ActuatorCommandKind.StartFan:
-                    if (!_byFanId.TryGetValue(command.DeviceId, out chain))
-                    {
-                        return false;
-                    }
-
-                    if (chain.FanTargetRpm <= 0.0)
-                    {
-                        chain.FanTargetRpm = _options.FanMaxRpm * 0.3;
-                    }
-
-                    return true;
-
-                default:
+                if (command == null)
+                {
                     return false;
+                }
+
+                ChainState chain;
+
+                switch (command.Kind)
+                {
+                    case ActuatorCommandKind.SetValvePosition:
+                        if (!_byValveId.TryGetValue(command.DeviceId, out chain))
+                        {
+                            return false;
+                        }
+
+                        chain.ValveTargetPulse = Clamp(command.Value, 0.0, _options.ValveFullOpenPulse);
+                        return true;
+
+                    case ActuatorCommandKind.CloseValve:
+                        if (!_byValveId.TryGetValue(command.DeviceId, out chain))
+                        {
+                            return false;
+                        }
+
+                        chain.ValveTargetPulse = 0.0;
+                        return true;
+
+                    case ActuatorCommandKind.QuickStopValve:
+                        if (!_byValveId.TryGetValue(command.DeviceId, out chain))
+                        {
+                            return false;
+                        }
+
+                        // 즉시 정지는 현재 위치를 목표로 고정하는 것과 같다.
+                        chain.ValveTargetPulse = chain.ValvePulse;
+                        return true;
+
+                    case ActuatorCommandKind.HomeValve:
+                        if (!_byValveId.TryGetValue(command.DeviceId, out chain))
+                        {
+                            return false;
+                        }
+
+                        chain.ValveTargetPulse = 0.0;
+                        chain.ValveHomeDone = true;
+                        return true;
+
+                    case ActuatorCommandKind.SetFanRpm:
+                        if (!_byFanId.TryGetValue(command.DeviceId, out chain))
+                        {
+                            return false;
+                        }
+
+                        chain.FanTargetRpm = Clamp(command.Value, 0.0, _options.FanMaxRpm);
+                        return true;
+
+                    case ActuatorCommandKind.StopFan:
+                        if (!_byFanId.TryGetValue(command.DeviceId, out chain))
+                        {
+                            return false;
+                        }
+
+                        chain.FanTargetRpm = 0.0;
+                        return true;
+
+                    case ActuatorCommandKind.StartFan:
+                        if (!_byFanId.TryGetValue(command.DeviceId, out chain))
+                        {
+                            return false;
+                        }
+
+                        if (chain.FanTargetRpm <= 0.0)
+                        {
+                            chain.FanTargetRpm = _options.FanMaxRpm * 0.3;
+                        }
+
+                        return true;
+
+                    default:
+                        return false;
+                }
             }
         }
 
@@ -303,29 +324,35 @@ namespace Esam.Communication.Simulation
         /// <returns>적용된 지령 수.</returns>
         public int ApplyCommands(IEnumerable<ActuatorCommand> commands)
         {
-            if (commands == null)
+            lock (_gate)
             {
-                return 0;
-            }
-
-            int applied = 0;
-            foreach (ActuatorCommand command in commands)
-            {
-                if (ApplyCommand(command))
+                if (commands == null)
                 {
-                    applied++;
+                    return 0;
                 }
-            }
 
-            return applied;
+                int applied = 0;
+                foreach (ActuatorCommand command in commands)
+                {
+                    if (ApplyCommand(command))
+                    {
+                        applied++;
+                    }
+                }
+
+                return applied;
+            }
         }
 
         /// <summary>모든 밸브의 원점 복귀를 완료 처리한다. 시뮬레이션 초기화 편의 메서드.</summary>
         public void CompleteAllHoming()
         {
-            foreach (ChainState chain in _chains)
+            lock (_gate)
             {
-                chain.ValveHomeDone = true;
+                foreach (ChainState chain in _chains)
+                {
+                    chain.ValveHomeDone = true;
+                }
             }
         }
 
@@ -335,34 +362,37 @@ namespace Esam.Communication.Simulation
         /// <returns>해당 ID 의 센서가 존재하면 true.</returns>
         public bool TryGetPressure(string sensorId, out double pressurePa)
         {
-            pressurePa = 0.0;
-
-            if (string.IsNullOrEmpty(sensorId))
+            lock (_gate)
             {
+                pressurePa = 0.0;
+
+                if (string.IsNullOrEmpty(sensorId))
+                {
+                    return false;
+                }
+
+                ChainState chain;
+
+                if (_bySensor2Id.TryGetValue(sensorId, out chain))
+                {
+                    pressurePa = chain.Sensor2Lag.Value + _noise.Next(_options.Sensor2NoiseSigmaPa);
+                    return true;
+                }
+
+                if (_bySensor3Id.TryGetValue(sensorId, out chain))
+                {
+                    pressurePa = chain.Sensor3Lag.Value + _noise.Next(_options.Sensor3NoiseSigmaPa);
+                    return true;
+                }
+
+                if (_sensor1Ids.Contains(sensorId))
+                {
+                    pressurePa = _sensor1Lag.Value + _noise.Next(_options.Sensor1NoiseSigmaPa);
+                    return true;
+                }
+
                 return false;
             }
-
-            ChainState chain;
-
-            if (_bySensor2Id.TryGetValue(sensorId, out chain))
-            {
-                pressurePa = chain.Sensor2Lag.Value + _noise.Next(_options.Sensor2NoiseSigmaPa);
-                return true;
-            }
-
-            if (_bySensor3Id.TryGetValue(sensorId, out chain))
-            {
-                pressurePa = chain.Sensor3Lag.Value + _noise.Next(_options.Sensor3NoiseSigmaPa);
-                return true;
-            }
-
-            if (_sensor1Ids.Contains(sensorId))
-            {
-                pressurePa = _sensor1Lag.Value + _noise.Next(_options.Sensor1NoiseSigmaPa);
-                return true;
-            }
-
-            return false;
         }
 
         /// <summary>센서 ID 의 노이즈 없는 참값을 조회한다. 검증·디버깅용.</summary>
@@ -371,29 +401,32 @@ namespace Esam.Communication.Simulation
         /// <returns>해당 ID 의 센서가 존재하면 true.</returns>
         public bool TryGetTruePressure(string sensorId, out double pressurePa)
         {
-            pressurePa = 0.0;
-
-            ChainState chain;
-
-            if (_bySensor2Id.TryGetValue(sensorId ?? string.Empty, out chain))
+            lock (_gate)
             {
-                pressurePa = chain.Sensor2Lag.Value;
-                return true;
-            }
+                pressurePa = 0.0;
 
-            if (_bySensor3Id.TryGetValue(sensorId ?? string.Empty, out chain))
-            {
-                pressurePa = chain.Sensor3Lag.Value;
-                return true;
-            }
+                ChainState chain;
 
-            if (sensorId != null && _sensor1Ids.Contains(sensorId))
-            {
-                pressurePa = _sensor1Lag.Value;
-                return true;
-            }
+                if (_bySensor2Id.TryGetValue(sensorId ?? string.Empty, out chain))
+                {
+                    pressurePa = chain.Sensor2Lag.Value;
+                    return true;
+                }
 
-            return false;
+                if (_bySensor3Id.TryGetValue(sensorId ?? string.Empty, out chain))
+                {
+                    pressurePa = chain.Sensor3Lag.Value;
+                    return true;
+                }
+
+                if (sensorId != null && _sensor1Ids.Contains(sensorId))
+                {
+                    pressurePa = _sensor1Lag.Value;
+                    return true;
+                }
+
+                return false;
+            }
         }
 
         /// <summary>밸브 ID 로 현재 위치를 조회한다.</summary>
@@ -404,20 +437,23 @@ namespace Esam.Communication.Simulation
         /// <returns>해당 밸브가 존재하면 true.</returns>
         public bool TryGetValve(string valveId, out int pulse, out int targetPulse, out bool homeDone)
         {
-            pulse = 0;
-            targetPulse = 0;
-            homeDone = false;
-
-            ChainState chain;
-            if (!_byValveId.TryGetValue(valveId ?? string.Empty, out chain))
+            lock (_gate)
             {
-                return false;
-            }
+                pulse = 0;
+                targetPulse = 0;
+                homeDone = false;
 
-            pulse = (int)Math.Round(chain.ValvePulse, MidpointRounding.AwayFromZero);
-            targetPulse = (int)Math.Round(chain.ValveTargetPulse, MidpointRounding.AwayFromZero);
-            homeDone = chain.ValveHomeDone;
-            return true;
+                ChainState chain;
+                if (!_byValveId.TryGetValue(valveId ?? string.Empty, out chain))
+                {
+                    return false;
+                }
+
+                pulse = (int)Math.Round(chain.ValvePulse, MidpointRounding.AwayFromZero);
+                targetPulse = (int)Math.Round(chain.ValveTargetPulse, MidpointRounding.AwayFromZero);
+                homeDone = chain.ValveHomeDone;
+                return true;
+            }
         }
 
         /// <summary>팬 ID 로 현재 회전수를 조회한다.</summary>
@@ -427,38 +463,44 @@ namespace Esam.Communication.Simulation
         /// <returns>해당 팬이 존재하면 true.</returns>
         public bool TryGetFan(string fanId, out double rpm, out double targetRpm)
         {
-            rpm = 0.0;
-            targetRpm = 0.0;
-
-            ChainState chain;
-            if (!_byFanId.TryGetValue(fanId ?? string.Empty, out chain))
+            lock (_gate)
             {
-                return false;
-            }
+                rpm = 0.0;
+                targetRpm = 0.0;
 
-            rpm = chain.FanRpm;
-            targetRpm = chain.FanTargetRpm;
-            return true;
+                ChainState chain;
+                if (!_byFanId.TryGetValue(fanId ?? string.Empty, out chain))
+                {
+                    return false;
+                }
+
+                rpm = chain.FanRpm;
+                targetRpm = chain.FanTargetRpm;
+                return true;
+            }
         }
 
         /// <summary>플랜트 상태를 한 줄로 요약한다. 시뮬레이션 로그용.</summary>
         /// <returns>요약 문자열.</returns>
         public string Describe()
         {
-            System.Text.StringBuilder builder = new System.Text.StringBuilder();
-            builder.Append(string.Format(
-                CultureInfo.InvariantCulture, "t={0:F1}s S1={1:F2}Pa", ElapsedSec, _sensor1Lag.Value));
-
-            foreach (ChainState chain in _chains)
+            lock (_gate)
             {
+                System.Text.StringBuilder builder = new System.Text.StringBuilder();
                 builder.Append(string.Format(
-                    CultureInfo.InvariantCulture,
-                    " | #{0} V={1:F0}p F={2:F0}rpm S2={3:F1} S3={4:F1}",
-                    chain.Id, chain.ValvePulse, chain.FanRpm,
-                    chain.Sensor2Lag.Value, chain.Sensor3Lag.Value));
-            }
+                    CultureInfo.InvariantCulture, "t={0:F1}s S1={1:F2}Pa", ElapsedSec, _sensor1Lag.Value));
 
-            return builder.ToString();
+                foreach (ChainState chain in _chains)
+                {
+                    builder.Append(string.Format(
+                        CultureInfo.InvariantCulture,
+                        " | #{0} V={1:F0}p F={2:F0}rpm S2={3:F1} S3={4:F1}",
+                        chain.Id, chain.ValvePulse, chain.FanRpm,
+                        chain.Sensor2Lag.Value, chain.Sensor3Lag.Value));
+                }
+
+                return builder.ToString();
+            }
         }
 
         /// <summary>액추에이터를 속도 제한 하에 목표값으로 진행시킨다.</summary>

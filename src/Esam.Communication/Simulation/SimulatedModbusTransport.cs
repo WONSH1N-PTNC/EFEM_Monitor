@@ -64,6 +64,17 @@ namespace Esam.Communication.Simulation
     {
         private readonly Dictionary<byte, ISimulatedSlave> _slaves = new Dictionary<byte, ISimulatedSlave>();
         private readonly SimulationTransportOptions _options;
+
+        /// <summary>이 전송 계층의 시뮬레이션 옵션.</summary>
+        /// <remarks>
+        /// 조립 결과를 확인할 수 있어야 한다. 플랜트 시계를 어느 포트가 돌리는지는
+        /// 설정 실수가 나기 쉬운데, 밖에서 볼 수 없으면 <b>화면은 정상인데 장비만
+        /// 기동하지 않는</b> 상태를 검증할 방법이 없다.
+        /// </remarks>
+        public SimulationTransportOptions Options
+        {
+            get { return _options; }
+        }
         private readonly PlantModel _plant;
         private readonly Random _faultRandom;
         private readonly object _gate = new object();
