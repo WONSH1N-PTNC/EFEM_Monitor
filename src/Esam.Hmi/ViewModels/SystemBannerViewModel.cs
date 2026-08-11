@@ -27,6 +27,7 @@ namespace Esam.Hmi.ViewModels
     {
         private readonly HmiHost _host;
         private string _lastSignature;
+        private bool _isExpanded = true;
 
         /// <summary>배너를 생성한다.</summary>
         /// <param name="host">런타임 호스트. null 이면 디자인타임으로 동작한다.</param>
@@ -38,6 +39,7 @@ namespace Esam.Hmi.ViewModels
 
             AcknowledgeCommand = new RelayCommand(OnAcknowledge, CanAcknowledge);
             ResetFaultCommand = new RelayCommand(OnResetFault, CanResetFault);
+            ToggleCommand = new RelayCommand(OnToggle);
 
             Refresh();
         }
@@ -50,6 +52,28 @@ namespace Esam.Hmi.ViewModels
         {
             get { return HasStartupError || Warnings.Count > 0; }
         }
+
+        /// <summary>
+        /// 상세 목록을 펼친 상태인지 여부.
+        /// </summary>
+        /// <remarks>
+        /// <para>확인(Acknowledge)하면 접는다. <b>사라지지는 않는다.</b></para>
+        /// <para>완전히 감추면 "안전 입력이 배선되지 않은 채 운전 중" 이라는 사실이
+        /// 화면에서 없어진다. 확인은 "인지했다" 는 기록이지 "해결했다" 가 아니다.
+        /// 접힌 한 줄은 남겨 두고, 누르면 다시 펼쳐 무엇이 걸려 있는지 볼 수 있게 한다.</para>
+        /// <para>기동 실패는 접지 않는다. 운전 자체가 불가능한 상태이므로
+        /// 화면을 정리해 줄 이유가 없다.</para>
+        /// </remarks>
+        public bool IsExpanded
+        {
+            get { return _isExpanded || HasStartupError; }
+        }
+
+        /// <summary>접기/펼치기 토글 명령.</summary>
+        public ICommand ToggleCommand { get; private set; }
+
+        /// <summary>접힌 상태에서 보여줄 한 줄 요약.</summary>
+        public string CollapsedSummary { get; private set; }
 
         /// <summary>기동 실패 사유. 없으면 null.</summary>
         public string StartupError
@@ -124,6 +148,7 @@ namespace Esam.Hmi.ViewModels
                               && runtime.Engine.StateMachine.Phase == Esam.Domain.Control.SystemPhase.SafeStop;
 
             UpdateText();
+            UpdateCollapsedSummary();
 
             Raise("IsVisible");
             Raise("StartupError");
@@ -133,6 +158,17 @@ namespace Esam.Hmi.ViewModels
             Raise("HasRuntimeFault");
             Raise("Title");
             Raise("Detail");
+            Raise("IsExpanded");
+            Raise("CollapsedSummary");
+        }
+
+        /// <summary>접기/펼치기를 토글한다.</summary>
+        /// <param name="parameter">사용하지 않는다.</param>
+        private void OnToggle(object parameter)
+        {
+            _isExpanded = !_isExpanded;
+
+            Raise("IsExpanded");
         }
 
         /// <summary>제목과 본문을 현재 상태에 맞춰 만든다.</summary>
@@ -183,6 +219,34 @@ namespace Esam.Hmi.ViewModels
             Detail = "운전에는 영향이 없으나 확인이 필요한 항목입니다.";
         }
 
+        /// <summary>접힌 상태의 한 줄 요약을 만든다.</summary>
+        private void UpdateCollapsedSummary()
+        {
+            if (!IsVisible)
+            {
+                CollapsedSummary = null;
+                return;
+            }
+
+            int blocking = 0;
+
+            foreach (ConfigWarningRowViewModel row in Warnings)
+            {
+                if (row.IsBlocking)
+                {
+                    blocking++;
+                }
+            }
+
+            CollapsedSummary = blocking > 0
+                ? string.Format(
+                    CultureInfo.InvariantCulture,
+                    "안전 기능 경고 {0}건 확인됨 · 구성 참고 {1}건",
+                    blocking, Warnings.Count - blocking)
+                : string.Format(
+                    CultureInfo.InvariantCulture, "구성 참고 {0}건", Warnings.Count);
+        }
+
         /// <summary>목록이 바뀌었는지 판정할 서명을 만든다.</summary>
         /// <param name="warnings">경고 목록.</param>
         /// <returns>서명 문자열.</returns>
@@ -225,6 +289,9 @@ namespace Esam.Hmi.ViewModels
             {
                 runtime.AcknowledgeWarnings();
             }
+
+            // 확인하면 접는다. 화면을 잠식하지 않으면서 사실은 남긴다.
+            _isExpanded = false;
 
             Refresh();
         }

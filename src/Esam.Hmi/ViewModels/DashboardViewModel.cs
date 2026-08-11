@@ -126,6 +126,8 @@ namespace Esam.Hmi.ViewModels
 
             SelectModeCommand = new RelayCommand(OnSelectMode);
             AckAllCommand = new RelayCommand(OnAckAll, o => UnacknowledgedCount > 0);
+            StartAutoCommand = new RelayCommand(OnStartAuto, CanStartAuto);
+            StopAutoCommand = new RelayCommand(OnStopAuto, CanStopAuto);
 
             BuildStructure();
             SeedHistory();
@@ -435,6 +437,35 @@ namespace Esam.Hmi.ViewModels
         /// <summary>전체 알람 확인 커맨드.</summary>
         public ICommand AckAllCommand { get; private set; }
 
+        /// <summary>자동 운전 시작 커맨드.</summary>
+        public ICommand StartAutoCommand { get; private set; }
+
+        /// <summary>자동 운전 정지 커맨드.</summary>
+        public ICommand StopAutoCommand { get; private set; }
+
+        /// <summary>자동 운전 중인지 여부.</summary>
+        public bool IsAutoRunning
+        {
+            get
+            {
+                return _runtime != null
+                       && _runtime.Engine.StateMachine.Phase == SystemPhase.AutoControl;
+            }
+        }
+
+        /// <summary>자동 운전 진입이 거부된 사유. 없으면 null.</summary>
+        /// <remarks>
+        /// 버튼을 눌렀는데 아무 일도 일어나지 않으면 작업자는 프로그램이 멈춘 줄 안다.
+        /// 거부 사유를 화면에 남겨 원인을 볼 수 있게 한다.
+        /// </remarks>
+        public string AutoRejectReason { get; private set; }
+
+        /// <summary>자동 운전 거부 사유가 있는지 여부.</summary>
+        public bool HasAutoRejectReason
+        {
+            get { return !string.IsNullOrEmpty(AutoRejectReason); }
+        }
+
         #endregion
 
         /// <summary>
@@ -484,6 +515,11 @@ namespace Esam.Hmi.ViewModels
 
             Raise("EquipmentState");
             Raise("HostState");
+            Raise("IsAutoRunning");
+
+            // 단계가 바뀌면 버튼 활성 상태도 바뀐다.
+            // 다시 묻게 하지 않으면 Ready 가 되어도 버튼이 회색으로 남는다.
+            CommandManager.InvalidateRequerySuggested();
         }
 
         /// <summary>체인 카드·게이지·트렌드 채널의 구조를 만든다.</summary>
@@ -1235,6 +1271,65 @@ namespace Esam.Hmi.ViewModels
             Raise("AlarmCounterText");
             Raise("AlarmCounterBrush");
             Raise("UnacknowledgedCount");
+        }
+
+        /// <summary>자동 운전을 시작할 수 있는지 판정한다.</summary>
+        /// <param name="parameter">사용하지 않는다.</param>
+        /// <returns>가능하면 true.</returns>
+        private bool CanStartAuto(object parameter)
+        {
+            return _runtime != null
+                   && _runtime.Engine.StateMachine.Phase == SystemPhase.Ready;
+        }
+
+        /// <summary>자동 운전을 시작한다.</summary>
+        /// <param name="parameter">사용하지 않는다.</param>
+        /// <remarks>
+        /// 진입 가능 여부는 <c>ControlEngine</c> 이 판정한다. 구성 경고가 확인되지
+        /// 않았거나 레시피에 빠진 센서가 있으면 거부되고, 그 사유가 남는다.
+        /// 버튼을 눌렀는데 아무 일도 일어나지 않으면 작업자는 프로그램이 멈춘 줄 안다.
+        /// </remarks>
+        private void OnStartAuto(object parameter)
+        {
+            if (_runtime == null)
+            {
+                return;
+            }
+
+            AutoRejectReason = _runtime.Engine.RequestAuto()
+                ? null
+                : _runtime.Engine.LastAutoRejectReason;
+
+            Raise("AutoRejectReason");
+            Raise("HasAutoRejectReason");
+            Raise("IsAutoRunning");
+        }
+
+        /// <summary>자동 운전을 정지할 수 있는지 판정한다.</summary>
+        /// <param name="parameter">사용하지 않는다.</param>
+        /// <returns>가능하면 true.</returns>
+        private bool CanStopAuto(object parameter)
+        {
+            return IsAutoRunning;
+        }
+
+        /// <summary>자동 운전을 정지한다.</summary>
+        /// <param name="parameter">사용하지 않는다.</param>
+        /// <remarks>
+        /// 액추에이터는 그대로 둔다. 자동 제어만 끄는 것이지 장비를 세우는 것이 아니다.
+        /// 밸브를 닫고 팬을 세우려면 인터록이나 종료 경로를 거쳐야 한다.
+        /// </remarks>
+        private void OnStopAuto(object parameter)
+        {
+            if (_runtime != null)
+            {
+                _runtime.Engine.StopAuto();
+            }
+
+            AutoRejectReason = null;
+            Raise("AutoRejectReason");
+            Raise("HasAutoRejectReason");
+            Raise("IsAutoRunning");
         }
 
         /// <summary>제어 모드 전환 커맨드 처리.</summary>

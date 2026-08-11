@@ -484,10 +484,43 @@
                                      Style="{StaticResource CompactNavButtonStyle}" Height="30" />
                     </UniformGrid>
 
+                    <!--
+                        운전 제어. 이 버튼이 없으면 원점 복귀 후 Ready 에서 멈춘 채
+                        밸브가 움직이지 않는다. 제어 루프를 시작시키는 유일한 지점이다.
+                    -->
+                    <UniformGrid Columns="2" Margin="0,0,0,8">
+                        <Button Content="AUTO 시작"
+                                Command="{Binding StartAutoCommand}"
+                                Style="{StaticResource ConsoleButtonStyle}"
+                                Height="32" Margin="0,0,4,0" />
+                        <Button Content="AUTO 정지"
+                                Command="{Binding StopAutoCommand}"
+                                Style="{StaticResource ConsoleButtonStyle}"
+                                Height="32" Margin="4,0,0,0" />
+                    </UniformGrid>
+
+                    <!-- 거부 사유. 버튼을 눌렀는데 아무 일도 없으면 원인을 알 수 없다. -->
+                    <TextBlock Text="{Binding AutoRejectReason}"
+                               TextWrapping="Wrap"
+                               FontSize="11"
+                               Margin="0,0,0,10"
+                               Foreground="{StaticResource StatusWarnBrush}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasAutoRejectReason}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
                     <Border Style="{StaticResource InsetBorderStyle}" Padding="12,10" Margin="0,0,0,14">
                         <StackPanel>
                             <TextBlock Text="PHASE" Style="{StaticResource MicroLabelStyle}" />
-                            <TextBlock Text="AutoControl"
+                            <TextBlock Text="{Binding EquipmentState}"
                                        FontFamily="{StaticResource MonoFont}"
                                        FontSize="16" FontWeight="Bold"
                                        Foreground="{StaticResource AccentBrush}"
