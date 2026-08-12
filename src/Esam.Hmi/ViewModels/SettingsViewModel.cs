@@ -370,9 +370,63 @@ namespace Esam.Hmi.ViewModels
 
             string path = Path.Combine(ConfigFolder, "device-map.json");
 
+            // ★ D21. 종전에는 직렬화 결과를 그대로 썼다. 이 파일의 주석 55줄에는
+            // 폴링 예산 계산, 압력 스케일이 잠정값이라는 사실, 시뮬레이션 슬레이브와
+            // 값이 짝이라는 사실이 적혀 있다. 현장에서 COM 포트를 한 번 바꾸는 것만으로
+            // 그 근거가 전부 사라졌다.
+            //
+            // 이제 원문을 다시 읽어 값 토큰만 바꾼다.
+            string original;
+
             try
             {
-                File.WriteAllText(path, json);
+                original = File.ReadAllText(path);
+            }
+            catch (IOException ex)
+            {
+                Errors.Add(ex.Message);
+                StatusText = "통신 구성 파일을 읽지 못했습니다.";
+                HasError = true;
+                return;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                Errors.Add(ex.Message);
+                StatusText = "파일 접근이 거부되었습니다.";
+                HasError = true;
+                return;
+            }
+
+            string updated;
+            string editError;
+
+            if (!DeviceMapDocumentEditor.TryApply(original, edited, out updated, out editError))
+            {
+                Errors.Add(editError);
+                StatusText = "저장하지 않았습니다.";
+                HasError = true;
+                return;
+            }
+
+            // 실제로 쓸 내용을 다시 검증한다. 직렬화본만 검증하고 다른 것을 쓰면
+            // 검증한 것과 저장한 것이 달라진다.
+            ConfigLoadResult final = CommunicationConfigLoader.LoadFromJson(updated);
+
+            if (!final.IsSuccess)
+            {
+                foreach (string error in final.Errors)
+                {
+                    Errors.Add(error);
+                }
+
+                StatusText = "통신 구성 검증에 실패해 저장하지 않았습니다.";
+                HasError = true;
+                return;
+            }
+
+            try
+            {
+                File.WriteAllText(path, updated);
             }
             catch (IOException ex)
             {

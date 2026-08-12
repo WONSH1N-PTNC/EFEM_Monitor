@@ -264,9 +264,63 @@ namespace Esam.Hmi.ViewModels
                 Errors.Add("경고: " + warning);
             }
 
+            // ★ D21. 종전에는 직렬화 결과를 그대로 썼다. 이 파일은 52줄 중 29줄이
+            // 주석이고, 상한과 하한을 독립으로 둔 이유와 인터록이 이 대역을 쓰지 않는
+            // 이유가 거기 적혀 있다. 저장 한 번에 파일의 절반 이상이 사라졌다.
+            //
+            // 이제 원문을 다시 읽어 값 토큰만 바꾼다. 화면을 열어 둔 사이 누가
+            // 주석을 고쳤다면 그 위에 값을 얹는다.
+            string original;
+
             try
             {
-                File.WriteAllText(RecipePath, json);
+                original = File.ReadAllText(RecipePath);
+            }
+            catch (IOException ex)
+            {
+                Errors.Add(ex.Message);
+                StatusText = "파일을 읽지 못했습니다.";
+                HasError = true;
+                return;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                Errors.Add(ex.Message);
+                StatusText = "파일 접근이 거부되었습니다.";
+                HasError = true;
+                return;
+            }
+
+            string updated;
+            string editError;
+
+            if (!RecipeDocumentEditor.TryApply(original, verified.Recipe, out updated, out editError))
+            {
+                Errors.Add(editError);
+                StatusText = "저장하지 않았습니다.";
+                HasError = true;
+                return;
+            }
+
+            // 실제로 쓸 내용을 다시 검증한다. 직렬화본만 검증하고 다른 것을 쓰면
+            // 검증한 것과 저장한 것이 달라진다.
+            RecipeLoadResult final = RecipeConfigLoader.LoadFromJson(updated, runtime.Map);
+
+            if (!final.IsSuccess)
+            {
+                foreach (string error in final.Errors)
+                {
+                    Errors.Add(error);
+                }
+
+                StatusText = "검증에 실패해 저장하지 않았습니다.";
+                HasError = true;
+                return;
+            }
+
+            try
+            {
+                File.WriteAllText(RecipePath, updated);
             }
             catch (IOException ex)
             {
@@ -285,7 +339,7 @@ namespace Esam.Hmi.ViewModels
 
             // 통째로 교체한다. 항목을 제자리에서 고치면 제어 스레드가
             // 반쯤 갱신된 목록을 읽어, 통로마다 다른 시점의 설정으로 제어된다.
-            runtime.Control.Recipe = verified.Recipe;
+            runtime.Control.Recipe = final.Recipe;
 
             StatusText = runtime.Engine.StateMachine.IsAutoEnabled
                 ? "저장했습니다. 운전 중이므로 즉시 반영됩니다."

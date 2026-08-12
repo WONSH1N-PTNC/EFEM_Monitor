@@ -19,8 +19,8 @@
 | 통신 | Modbus RTU (RS-485 반이중), CRC-16/MODBUS, FC03/04/06/16 |
 | 하드웨어 | 차압센서 13, 스로틀밸브 5, 송풍팬 5, PLC 1 (+ FFU·MFC·풍속·온습도·파티클 확장) |
 | 채널 | CH1(COM3, 19200) / CH2(COM4, 38400) — 2포트 |
-| 현재 커밋 | `8aab4f4` (S7.5-a) + S7.5-b |
-| 테스트 | **512건 전량 통과** |
+| 현재 커밋 | `562c5f4` (S7.5-b) + D21 |
+| 테스트 | **527건 전량 통과** |
 
 ### 프로젝트 구조
 
@@ -111,9 +111,9 @@ d 레시피 편집 / e 통신·통로 설정 / f ViewModel 테스트 36건 + 문
 
 ---
 
-## 5. 결함 이력 (총 20건, 전량 해소)
+## 5. 결함 이력 (총 21건, 전량 해소)
 
-전체 내용은 `docs/DESIGN.md` §11.0 / §11.1 / §11.3 / §11.4. 요점만:
+전체 내용은 `docs/DESIGN.md` §11.0 / §11.1 / §11.3 / §11.4 / §11.5 / §11.6. 요점만:
 
 | 그룹 | 결함 | 발견 경로 |
 |---|---|---|
@@ -123,6 +123,7 @@ d 레시피 편집 / e 통신·통로 설정 / f ViewModel 테스트 36건 + 문
 | D18 | 설정 검증 실패 시 "되돌린다" 는 주석이 거짓 | ViewModel 테스트 작성 중 |
 | D19 | **PLC 측정점 키가 코드(`di.fanStop0`)와 설정(`di.fanStop.0`)에서 다름.** 점 하나 차이로 **송풍팬 정지·과열 알람 10건이 영원히 울리지 않음** | I/O 화면에 올릴 값을 찾다가 |
 | D20 | **대시보드 우측 패널·포트 진단이 전부 고정 문자열.** 갱신 코드가 아예 없었음 | 같음 |
+| D21 | **`device-map.json`·`recipe.json` 저장이 주석을 전부 지움.** 압력 스케일이 잠정값이라는 근거가 COM 포트 한 번 바꾸면 사라짐 | S7.5-c 준비 중 |
 
 > **D19 도 441건을 전부 통과한 상태에서 나왔습니다.** 통합 테스트가 자체 맵을
 > **코드와 같은 방식으로** 만들었기 때문입니다. 양쪽이 같은 오타를 공유하면
@@ -172,7 +173,14 @@ d 레시피 편집 / e 통신·통로 설정 / f ViewModel 테스트 36건 + 문
 
 ---
 
-## 8. 다음 단계 — S7.5-c
+## 8. 다음 단계 — S7.5-c (Maintenance)
+
+**설정 파일 저장은 이제 세 파일 모두 주석을 보존합니다.** 공용 스캐너는
+`JsonTextScanner`·`JsonTextPatch` 이고, 파일별 편집기(`AlarmDocumentEditor`,
+`DeviceMapDocumentEditor`, `RecipeDocumentEditor`)가 "어느 값을 바꿀지" 만 압니다.
+**영점 교정은 `DeviceMapDocumentEditor` 를 그대로 씁니다.**
+
+
 
 **2026-08-12.** S7.5 를 셋으로 나눠 **a(I/O Status)와 b(알람 설정)를 끝냈습니다.**
 남은 것은 **c — Maintenance · Data Log** 입니다.
@@ -220,7 +228,7 @@ d 레시피 편집 / e 통신·통로 설정 / f ViewModel 테스트 36건 + 문
 
 ---
 
-## 10. 테스트 구성 (512건)
+## 10. 테스트 구성 (527건)
 
 | 파일 | 건수 | 대상 |
 |---|---|---|
@@ -234,6 +242,7 @@ d 레시피 편집 / e 통신·통로 설정 / f ViewModel 테스트 36건 + 문
 | `AlarmDocumentEditorTests.cs` | 12 | **주석 보존 저장** — 무편집 시 바이트 동일, 편집 시 한 줄만 변경 |
 | `AlarmEditorViewModelTests.cs` | 14 | 알람 화면 판단 — 파싱·압력룰 잠금·치명 확인 절차 |
 | `AlarmRuleSwapTests.cs` | 9 | **발생 상태 승계** — 저장이 Reset 을 대신하지 않을 것 |
+| `ConfigDocumentEditorTests.cs` | 15 | **device-map·recipe 주석 보존**(D21) + 공용 스캐너 |
 | `ModbusCodecTests.cs` | 25 | CRC·프레임 |
 | `InterlockEvaluatorTests.cs` | 23 | 인터록 판정 |
 | `AlarmConfigTests.cs` / `RecipeConfigTests.cs` | 20 / 22 | **배포 설정 파일 자체**를 검증 |
