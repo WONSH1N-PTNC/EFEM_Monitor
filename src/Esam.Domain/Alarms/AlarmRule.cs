@@ -136,7 +136,7 @@ namespace Esam.Domain.Alarms
     {
         private DateTime _conditionSinceUtc;
 
-        /// <summary>대응하는 규칙.</summary>
+        /// <summary>대응하는 규칙. <see cref="Rebind"/> 로만 바뀐다.</summary>
         public AlarmRule Rule { get; private set; }
 
         /// <summary>알람이 확정 발생한 상태인지 여부.</summary>
@@ -220,6 +220,43 @@ namespace Esam.Domain.Alarms
             TriggerValue = value;
             Detail = detail;
             return true;
+        }
+
+        /// <summary>
+        /// 발생 상태는 유지한 채 규칙만 새 것으로 갈아 끼운다.
+        /// </summary>
+        /// <param name="rule">같은 코드의 새 규칙.</param>
+        /// <exception cref="ArgumentNullException">규칙이 null 일 때.</exception>
+        /// <exception cref="ArgumentException">코드가 다를 때.</exception>
+        /// <remarks>
+        /// <para>설정 화면에서 임계값을 고치면 규칙 객체가 새로 만들어진다.
+        /// 그때 상태까지 새로 만들면 <b>떠 있던 알람이 저장 한 번에 사라진다.</b>
+        /// Manual 정책 알람은 사람이 Reset 하기 전까지 남아 있어야 하는데,
+        /// 화면에서 다른 알람의 디바운스를 고쳤다는 이유로 조용히 지워진다.</para>
+        /// <para>그래서 상태는 남기고 규칙만 바꾼다. 새 규칙의 해제 정책이
+        /// <see cref="AlarmResetPolicy.Auto"/> 로 바뀌었다면 다음 판정에서
+        /// 조건이 해소된 순간 정상적으로 해제된다.</para>
+        /// <para>코드가 다르면 던진다. 다른 알람의 상태를 물려받는 것은
+        /// 되살릴 수 없는 종류의 혼동이다.</para>
+        /// </remarks>
+        public void Rebind(AlarmRule rule)
+        {
+            if (rule == null)
+            {
+                throw new ArgumentNullException("rule");
+            }
+
+            if (!string.Equals(rule.Code, Rule.Code, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "알람 상태를 다른 코드의 규칙에 다시 묶을 수 없습니다({0} → {1}).",
+                        Rule.Code, rule.Code),
+                    "rule");
+            }
+
+            Rule = rule;
         }
 
         /// <summary>사용자가 알람을 확인(Ack)했음을 기록한다.</summary>

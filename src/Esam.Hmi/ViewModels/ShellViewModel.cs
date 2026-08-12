@@ -18,7 +18,10 @@ namespace Esam.Hmi.ViewModels
         ConfigSystem = 2,
 
         /// <summary>I/O 상태 — 연결 램프·PLC 입력·원시값.</summary>
-        IoStatus = 3
+        IoStatus = 3,
+
+        /// <summary>설정 — 알람 규칙.</summary>
+        ConfigAlarm = 4
     }
 
     /// <summary>
@@ -52,6 +55,10 @@ namespace Esam.Hmi.ViewModels
             Recipe = new RecipeEditorViewModel(host);
             Settings = new SettingsViewModel(host, OnRuntimeRebuilt);
             IoStatus = new IoStatusViewModel(runtime);
+
+            // 알람 편집기는 호스트를 들고 있다. 런타임이 바뀌어도 다시 만들 필요가 없고,
+            // 재조립 뒤 Load() 만 부르면 새 런타임의 레시피로 검증이 이어진다.
+            Alarms = new AlarmEditorViewModel(host);
 
             SelectScreenCommand = new RelayCommand(OnSelectScreen);
             ToggleWriteAccessCommand = new RelayCommand(OnToggleWriteAccess);
@@ -97,6 +104,7 @@ namespace Esam.Hmi.ViewModels
             }
 
             Recipe.Load();
+            Alarms.Load();
             Banner.Refresh();
 
             Raise("Dashboard");
@@ -117,6 +125,9 @@ namespace Esam.Hmi.ViewModels
 
         /// <summary>I/O 상태 화면.</summary>
         public IoStatusViewModel IoStatus { get; private set; }
+
+        /// <summary>알람 설정 화면.</summary>
+        public AlarmEditorViewModel Alarms { get; private set; }
 
         /// <summary>화면 선택 명령.</summary>
         public ICommand SelectScreenCommand { get; private set; }
@@ -146,6 +157,12 @@ namespace Esam.Hmi.ViewModels
         public bool IsIoStatus
         {
             get { return _screen == ShellScreen.IoStatus; }
+        }
+
+        /// <summary>알람 설정 화면을 보고 있는지 여부.</summary>
+        public bool IsConfigAlarm
+        {
+            get { return _screen == ShellScreen.ConfigAlarm; }
         }
 
         /// <summary>쓰기가 허용된 상태인지 여부.</summary>
@@ -184,6 +201,14 @@ namespace Esam.Hmi.ViewModels
                 _screen = ShellScreen.ConfigSystem;
                 Settings.Load();
             }
+            else if (string.Equals(name, "ConfigAlarm", StringComparison.OrdinalIgnoreCase))
+            {
+                _screen = ShellScreen.ConfigAlarm;
+
+                // 화면에 들어올 때 파일에서 다시 읽는다. 다른 경로로 설정이 바뀌었을 수
+                // 있고, 옛 값을 보여 주면 저장할 때 그것이 그대로 덮어쓴다.
+                Alarms.Load();
+            }
             else if (string.Equals(name, "IoStatus", StringComparison.OrdinalIgnoreCase))
             {
                 _screen = ShellScreen.IoStatus;
@@ -201,6 +226,7 @@ namespace Esam.Hmi.ViewModels
             Raise("IsConfigRecipe");
             Raise("IsConfigSystem");
             Raise("IsIoStatus");
+            Raise("IsConfigAlarm");
         }
 
         /// <summary>쓰기 잠금을 토글한다.</summary>

@@ -18,8 +18,10 @@ namespace Esam.Domain.Alarms
     /// </remarks>
     public sealed class AlarmEvaluator
     {
-        private readonly IDictionary<string, AlarmState> _states;
-        private readonly IList<AlarmRule> _rules;
+        // readonly 가 아니다. 설정을 적용할 때 목록과 상태를 통째로 바꿔 끼운다.
+        // 제자리에서 고치면 판정 중인 스레드가 반쯤 갱신된 목록을 읽는다.
+        private IDictionary<string, AlarmState> _states;
+        private IList<AlarmRule> _rules;
 
         /// <summary>상태 보호용 락. 폴링 스레드와 UI 스레드가 함께 접근한다.</summary>
         private readonly object _gate = new object();
@@ -27,7 +29,91 @@ namespace Esam.Domain.Alarms
         /// <summary>등록된 규칙 수.</summary>
         public int RuleCount
         {
-            get { return _rules.Count; }
+            get { lock (_gate) { return _rules.Count; } }
+        }
+
+        /// <summary>
+        /// 규칙 목록을 통째로 교체한다. 같은 코드의 발생 상태는 승계한다.
+        /// </summary>
+        /// <param name="rules">새 규칙 목록.</param>
+        /// <returns>교체 결과.</returns>
+        /// <exception cref="ArgumentNullException">규칙 목록이 null 일 때.</exception>
+        /// <remarks>
+        /// <para><b>왜 승계하는가.</b> 화면에서 알람 하나의 디바운스를 고치면
+        /// 규칙 74건이 전부 새 객체가 된다. 상태까지 새로 만들면 그 순간
+        /// <b>떠 있던 알람이 전부 사라진다.</b> Manual 정책 알람은 사람이 Reset 하기
+        /// 전까지 남아 있어야 하는데, 저장 버튼 한 번이 Reset 을 대신하게 된다.</para>
+        /// <para><b>왜 통째로 바꾸는가.</b> 목록을 제자리에서 고치면 판정 중인
+        /// 스레드가 절반만 갱신된 목록을 읽는다. 규칙 A 는 새 임계값,
+        /// 규칙 B 는 옛 임계값으로 판정되는 순간이 생긴다.</para>
+        /// <para>사라지는 코드 중 <b>활성 상태였던 것</b>은 따로 돌려준다.
+        /// 조용히 없어지면 현장에서 "알람이 저절로 꺼졌다" 가 된다.</para>
+        /// </remarks>
+        public AlarmRuleSwapResult ReplaceRules(IEnumerable<AlarmRule> rules)
+        {
+            if (rules == null)
+            {
+                throw new ArgumentNullException("rules");
+            }
+
+            List<AlarmRule> nextRules = new List<AlarmRule>();
+
+            Dictionary<string, AlarmState> nextStates =
+                new Dictionary<string, AlarmState>(StringComparer.OrdinalIgnoreCase);
+
+            List<string> added = new List<string>();
+            List<string> removed = new List<string>();
+            List<string> droppedActive = new List<string>();
+            int carried = 0;
+
+            lock (_gate)
+            {
+                HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (AlarmRule rule in rules)
+                {
+                    if (rule == null || string.IsNullOrEmpty(rule.Code) || !seen.Add(rule.Code))
+                    {
+                        continue;
+                    }
+
+                    nextRules.Add(rule);
+
+                    AlarmState existing;
+
+                    if (_states.TryGetValue(rule.Code, out existing))
+                    {
+                        existing.Rebind(rule);
+                        nextStates[rule.Code] = existing;
+                        carried++;
+                    }
+                    else
+                    {
+                        nextStates[rule.Code] = new AlarmState(rule);
+                        added.Add(rule.Code);
+                    }
+                }
+
+                foreach (KeyValuePair<string, AlarmState> pair in _states)
+                {
+                    if (nextStates.ContainsKey(pair.Key))
+                    {
+                        continue;
+                    }
+
+                    removed.Add(pair.Key);
+
+                    if (pair.Value.IsActive)
+                    {
+                        droppedActive.Add(pair.Key);
+                    }
+                }
+
+                _rules = nextRules;
+                _states = nextStates;
+            }
+
+            return new AlarmRuleSwapResult(added, removed, droppedActive, carried);
         }
 
         /// <summary>알람 평가기를 생성한다.</summary>

@@ -66,6 +66,13 @@
                                  Style="{StaticResource NavButtonStyle}"
                                  Margin="0,0,0,6" />
 
+                    <RadioButton Content="Alarm" GroupName="ScreenGroup"
+                                 IsChecked="{Binding IsConfigAlarm, Mode=OneWay}"
+                                 Command="{Binding SelectScreenCommand}"
+                                 CommandParameter="ConfigAlarm"
+                                 Style="{StaticResource NavButtonStyle}"
+                                 Margin="0,0,0,6" />
+
                     <RadioButton Content="I/O" GroupName="ScreenGroup"
                                  IsChecked="{Binding IsIoStatus, Mode=OneWay}"
                                  Command="{Binding SelectScreenCommand}"
@@ -126,6 +133,21 @@
                     </Style>
                 </views:RecipeEditorView.Style>
             </views:RecipeEditorView>
+
+            <views:AlarmEditorView DataContext="{Binding Alarms}">
+                <views:AlarmEditorView.Style>
+                    <Style TargetType="views:AlarmEditorView">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.IsConfigAlarm,
+                                             RelativeSource={RelativeSource AncestorType=Window}}"
+                                         Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:AlarmEditorView.Style>
+            </views:AlarmEditorView>
 
             <views:IoStatusView DataContext="{Binding IoStatus}">
                 <views:IoStatusView.Style>

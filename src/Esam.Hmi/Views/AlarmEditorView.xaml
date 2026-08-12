@@ -1,0 +1,316 @@
+<UserControl x:Class="Esam.Hmi.Views.AlarmEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignWidth="1400" d:DesignHeight="800"
+             Background="{StaticResource BgRootBrush}"
+             FontFamily="{StaticResource UiFont}">
+
+    <!--
+        알람 74종의 임계값·확정 시간·활성 여부를 고친다.
+        code·source·condition 은 구조라 읽기 전용이다.
+        압력 규칙의 임계값은 recipe.json 소관이라 칸을 잠근다.
+    -->
+
+    <UserControl.Resources>
+        <Style x:Key="AlarmCellStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+
+        <Style x:Key="AlarmFieldStyle" TargetType="TextBox">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="CaretBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Background" Value="{StaticResource BgInsetBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="6,3" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Style.Triggers>
+                <Trigger Property="IsFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="{StaticResource TextDisabledBrush}" />
+                    <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!--
+            임계값 칸. 압력 규칙은 recipe.json 이 값을 관리하므로 입력란을 감춘다.
+            변환기 대신 파생 스타일을 쓴다. Style 을 속성과 요소로 동시에 주면
+            "속성이 이미 설정되었으며" 로 빌드가 죽는다.
+        -->
+        <Style x:Key="ThresholdBoxStyle" TargetType="TextBox"
+               BasedOn="{StaticResource AlarmFieldStyle}">
+            <Setter Property="Visibility" Value="Collapsed" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsThresholdEditable}" Value="True">
+                    <Setter Property="Visibility" Value="Visible" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="AlarmComboStyle" TargetType="ComboBox">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Setter Property="Padding" Value="4,2" />
+        </Style>
+
+        <Style x:Key="AlarmHeaderStyle" TargetType="TextBlock" BasedOn="{StaticResource MicroLabelStyle}">
+            <Setter Property="Margin" Value="0,0,8,6" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ══ 머리말 ═════════════════════════════════════════════════════ -->
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="ALARM — 임계값 · 확정 시간 · 활성 여부"
+                       FontSize="18" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}" />
+            <TextBlock Text="{Binding AlarmPath, StringFormat=설정 파일: {0}}"
+                       FontSize="11" Margin="0,4,0,0"
+                       FontFamily="{StaticResource MonoFont}"
+                       Foreground="{StaticResource TextMutedBrush}" />
+        </StackPanel>
+
+        <!-- ══ 잠금 안내 ══════════════════════════════════════════════════ -->
+        <Border Grid.Row="1" Padding="12,8" Margin="0,10,0,0">
+            <Border.Style>
+                <Style TargetType="Border" BasedOn="{StaticResource InsetBorderStyle}">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsLocked}" Value="True">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+
+            <TextBlock Text="{Binding LockNotice}"
+                       FontSize="12" TextWrapping="Wrap"
+                       Foreground="{StaticResource StatusWarnBrush}" />
+        </Border>
+
+        <!-- ══ 필터 ═══════════════════════════════════════════════════════ -->
+        <Border Grid.Row="2" Style="{StaticResource InsetBorderStyle}"
+                Margin="0,10,0,0" Padding="12,8">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="검색" Style="{StaticResource AlarmHeaderStyle}"
+                           VerticalAlignment="Center" Margin="0,0,8,0" />
+
+                <TextBox Width="260"
+                         Style="{StaticResource AlarmFieldStyle}"
+                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+
+                <CheckBox Content="비활성만"
+                          IsChecked="{Binding DisabledOnly}"
+                          Foreground="{StaticResource TextSecondaryBrush}"
+                          VerticalAlignment="Center" Margin="6,0,12,0" />
+
+                <CheckBox Content="치명만"
+                          IsChecked="{Binding CriticalOnly}"
+                          Foreground="{StaticResource TextSecondaryBrush}"
+                          VerticalAlignment="Center" Margin="0,0,12,0" />
+
+                <Button Content="필터 해제"
+                        Command="{Binding ClearFilterCommand}"
+                        Style="{StaticResource ConsoleButtonStyle}"
+                        Padding="8,4" FontSize="11" />
+
+                <TextBlock Text="{Binding FilterSummary}"
+                           Style="{StaticResource AlarmCellStyle}"
+                           Margin="14,0,0,0" />
+            </StackPanel>
+        </Border>
+
+        <!-- ══ 표 ═════════════════════════════════════════════════════════ -->
+        <Border Grid.Row="3" Style="{StaticResource CardBorderStyle}"
+                Margin="0,10,0,0" Padding="14">
+            <DockPanel>
+                <Grid DockPanel.Dock="Top">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="62" />
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="1.4*" />
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="100" />
+                        <ColumnDefinition Width="90" />
+                        <ColumnDefinition Width="56" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="코드" Style="{StaticResource AlarmHeaderStyle}" />
+                    <TextBlock Grid.Column="1" Text="이름" Style="{StaticResource AlarmHeaderStyle}" />
+                    <TextBlock Grid.Column="2" Text="판정 대상" Style="{StaticResource AlarmHeaderStyle}" />
+                    <TextBlock Grid.Column="3" Text="임계값" Style="{StaticResource AlarmHeaderStyle}" />
+                    <TextBlock Grid.Column="4" Text="확정 [ms]" Style="{StaticResource AlarmHeaderStyle}" />
+                    <TextBlock Grid.Column="5" Text="심각도" Style="{StaticResource AlarmHeaderStyle}" />
+                    <TextBlock Grid.Column="6" Text="해제" Style="{StaticResource AlarmHeaderStyle}" />
+                    <TextBlock Grid.Column="7" Text="사용" Style="{StaticResource AlarmHeaderStyle}" />
+                </Grid>
+
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <ItemsControl ItemsSource="{Binding Rows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="62" />
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="1.4*" />
+                                        <ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="100" />
+                                        <ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="56" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0" Text="{Binding Code}"
+                                               Style="{StaticResource AlarmCellStyle}"
+                                               Foreground="{Binding SeverityBrush}" />
+
+                                    <TextBlock Grid.Column="1" Text="{Binding Name}"
+                                               Style="{StaticResource AlarmCellStyle}"
+                                               ToolTip="{Binding MessageKo}" />
+
+                                    <TextBlock Grid.Column="2" Text="{Binding Source}"
+                                               Style="{StaticResource AlarmCellStyle}"
+                                               ToolTip="{Binding Condition}" />
+
+                                    <!--
+                                        압력 규칙은 임계값을 recipe.json 이 관리한다.
+                                        칸을 잠그고 어디서 관리하는지 적는다.
+                                        빈칸으로 두면 "값이 없다" 로 읽힌다.
+                                    -->
+                                    <Grid Grid.Column="3">
+                                        <TextBox Style="{StaticResource ThresholdBoxStyle}"
+                                                 Text="{Binding Threshold, UpdateSourceTrigger=PropertyChanged}" />
+
+                                        <TextBlock Text="{Binding ThresholdNotice}"
+                                                   Style="{StaticResource AlarmCellStyle}"
+                                                   Foreground="{StaticResource TextDisabledBrush}" />
+                                    </Grid>
+
+                                    <TextBox Grid.Column="4"
+                                             Style="{StaticResource AlarmFieldStyle}"
+                                             Text="{Binding DebounceMs, UpdateSourceTrigger=PropertyChanged}" />
+
+                                    <ComboBox Grid.Column="5"
+                                              Style="{StaticResource AlarmComboStyle}"
+                                              ItemsSource="{Binding SeverityChoiceList}"
+                                              SelectedItem="{Binding Severity}" />
+
+                                    <ComboBox Grid.Column="6"
+                                              Style="{StaticResource AlarmComboStyle}"
+                                              ItemsSource="{Binding ResetChoiceList}"
+                                              SelectedItem="{Binding ResetPolicy}" />
+
+                                    <CheckBox Grid.Column="7"
+                                              IsChecked="{Binding Enabled}"
+                                              VerticalAlignment="Center"
+                                              HorizontalAlignment="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+        <!-- ══ 하단 — 확인·상태·버튼 ═══════════════════════════════════════ -->
+        <StackPanel Grid.Row="4" Margin="0,12,0,0">
+
+            <!--
+                치명 알람을 끄려 할 때만 나타난다. 막지는 않는다.
+                막으면 파일을 직접 열게 되고, 그 경로에는 검증도 확인도 없다.
+            -->
+            <Border Padding="12,8" Margin="0,0,0,8">
+                <Border.Style>
+                    <Style TargetType="Border" BasedOn="{StaticResource InsetBorderStyle}">
+                        <Setter Property="Visibility" Value="Visible" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding CriticalDisableWarning}" Value="{x:Null}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+
+                <StackPanel>
+                    <TextBlock Text="{Binding CriticalDisableWarning}"
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{StaticResource StatusBadBrush}" />
+
+                    <CheckBox Content="확인했습니다. 치명 알람을 끕니다."
+                              IsChecked="{Binding CriticalDisableConfirmed}"
+                              Foreground="{StaticResource TextPrimaryBrush}"
+                              Margin="0,8,0,0" />
+                </StackPanel>
+            </Border>
+
+            <ItemsControl ItemsSource="{Binding Errors}" Margin="0,0,0,6">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}"
+                                   FontSize="11" TextWrapping="Wrap" Margin="0,1"
+                                   Foreground="{StaticResource StatusBadBrush}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <ItemsControl ItemsSource="{Binding Notices}" Margin="0,0,0,6">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}"
+                                   FontSize="11" TextWrapping="Wrap" Margin="0,1"
+                                   Foreground="{StaticResource StatusWarnBrush}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <StackPanel Orientation="Horizontal">
+                <Button Content="저장"
+                        Command="{Binding SaveCommand}"
+                        Style="{StaticResource ConsoleButtonStyle}"
+                        Padding="18,7" Margin="0,0,8,0" />
+
+                <Button Content="다시 읽기"
+                        Command="{Binding ReloadCommand}"
+                        Style="{StaticResource ConsoleButtonStyle}"
+                        Padding="18,7" Margin="0,0,14,0" />
+
+                <TextBlock Text="{Binding StatusText}"
+                           VerticalAlignment="Center" FontSize="12">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasError}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource StatusBadBrush}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</UserControl>

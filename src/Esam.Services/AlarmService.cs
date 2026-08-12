@@ -130,6 +130,32 @@ namespace Esam.Services
             return _evaluator.FindState(code);
         }
 
+        /// <summary>
+        /// 규칙 목록을 교체한다. 같은 코드의 발생 상태는 승계한다.
+        /// </summary>
+        /// <param name="rules">새 규칙 목록.</param>
+        /// <returns>교체 결과. 무엇이 없어지고 무엇이 생겼는지 화면에 적는 데 쓴다.</returns>
+        /// <exception cref="ArgumentNullException">규칙 목록이 null 일 때.</exception>
+        /// <remarks>
+        /// <para>설정 화면이 저장한 뒤 호출한다. 종전에는 규칙을 바꾸려면
+        /// <b>런타임 전체를 재조립</b>하는 수밖에 없었다. 그러면 워커가 멈추고
+        /// 포트를 다시 열고 밸브가 원점 복귀를 다시 한다.
+        /// <b>운전 중에 임계값 하나를 고칠 수 없다는 뜻이었다.</b></para>
+        /// <para>요약도 즉시 다시 만든다. 그러지 않으면 다음 평가까지
+        /// 없어진 규칙이 요약에 남아 화면의 알람 개수가 실제와 어긋난다.</para>
+        /// </remarks>
+        public AlarmRuleSwapResult ReplaceRules(IEnumerable<AlarmRule> rules)
+        {
+            AlarmRuleSwapResult result = _evaluator.ReplaceRules(rules);
+
+            lock (_gate)
+            {
+                _summary = _evaluator.BuildSummary();
+            }
+
+            return result;
+        }
+
         /// <summary>모든 활성 알람을 확인(Ack) 처리한다.</summary>
         public void AcknowledgeAll()
         {
