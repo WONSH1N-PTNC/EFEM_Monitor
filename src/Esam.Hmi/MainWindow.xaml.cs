@@ -64,6 +64,11 @@ namespace Esam.Hmi
 
             _shell.Dashboard.Start();
 
+            // I/O 화면은 보이지 않을 때도 돈다. 화면을 열자마자 값이 차 있어야
+            // 커미셔닝에서 "지금 표시된 것이 최신인가" 를 의심하지 않는다.
+            // 주기가 250 ms 라 부담이 크지 않다.
+            _shell.IoStatus.Start();
+
             // 배너는 대시보드보다 느리게 갱신해도 된다.
             // 구성 경고는 초 단위로 바뀌는 값이 아니고, 장애 발생은 1초 안에 보이면 충분하다.
             _bannerTimer = new DispatcherTimer(DispatcherPriority.Background);
@@ -103,6 +108,7 @@ namespace Esam.Hmi
             if (_shell != null)
             {
                 _shell.Dashboard.Stop();
+                _shell.IoStatus.Stop();
                 _shell = null;
             }
         }

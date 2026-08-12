@@ -5,6 +5,8 @@ using System.Globalization;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Esam.Communication.Diagnostics;
+using Esam.Communication.Polling;
 using Esam.Domain.Alarms;
 using Esam.Domain.Configuration;
 using Esam.Domain.Control;
@@ -46,6 +48,16 @@ namespace Esam.Hmi.ViewModels
     {
         /// <summary>화면 갱신 주기 [ms]. 사람이 인지하는 한계인 10 FPS 로 제한한다.</summary>
         private const int RefreshIntervalMs = 100;
+
+        /// <summary>값이 없을 때 표시할 문자열.</summary>
+        /// <remarks>
+        /// 0 이나 마지막 값으로 채우지 않는다. 0 은 유효한 측정값일 수 있고
+        /// (풍속 0 m/s), 마지막 값은 통신이 끊긴 사실을 감춘다.
+        /// </remarks>
+        private const string NoValue = "- -";
+
+        /// <summary>폴링 예산 [ms]. 초과하면 진단값을 강조한다(Open Issue #1 로 218 ms 확정).</summary>
+        private const double PollingBudgetMs = 218.0;
 
         /// <summary>트렌드에 보관하는 표본 수. 100ms × 120 = 12초 구간.</summary>
         private const int HistoryLength = 120;
@@ -547,22 +559,54 @@ namespace Esam.Hmi.ViewModels
                 Sensor1Gauges.Add(gauge);
             }
 
-            ChamberReadouts.Add(new ReadoutViewModel("MFC 1", "12.4", "slm"));
-            ChamberReadouts.Add(new ReadoutViewModel("MFC 2", "- -", "slm"));
-            ChamberReadouts.Add(new ReadoutViewModel("Temp (EFEM)", "30.4", "°C", true));
+            // ★ D20. 종전에는 여기서 "풍속 0.42", "Humidity 41.2" 같은 숫자를 넣고
+            //    끝이었다. 갱신하는 코드가 어디에도 없어 그 값이 영원히 화면에 남았다.
+            //    실제 압력값 옆에 나란히 놓여 있어 구분되지 않았고, 통신이 끊겨도
+            //    숫자가 그대로라 "값이 멈췄다" 는 신호조차 없었다.
+            //
+            //    이제 구조만 만들고 값은 매 틱 스냅샷에서 채운다.
+            //    장치가 붙기 전에는 "- -" 로 보인다. 그것이 사실이다.
+            ChamberReadouts.Add(new ReadoutViewModel("MFC 1", NoValue, "slm"));
+            ChamberReadouts.Add(new ReadoutViewModel("MFC 2", NoValue, "slm"));
+            ChamberReadouts.Add(new ReadoutViewModel("Temp (EFEM)", NoValue, "°C"));
 
-            AuxiliaryReadouts.Add(new ReadoutViewModel("풍속 1", "0.42", "m/s"));
-            AuxiliaryReadouts.Add(new ReadoutViewModel("풍속 2", "0.44", "m/s"));
-            AuxiliaryReadouts.Add(new ReadoutViewModel("풍속 3", "0.45", "m/s"));
-            AuxiliaryReadouts.Add(new ReadoutViewModel("Temp (EFEM)", "30.4", "°C", true));
-            AuxiliaryReadouts.Add(new ReadoutViewModel("Humidity", "41.2", "%RH"));
-            AuxiliaryReadouts.Add(new ReadoutViewModel("Temp (C/BOX)", "31.8", "°C"));
-            AuxiliaryReadouts.Add(new ReadoutViewModel("MFC 1", "12.4", "slm"));
+            AuxiliaryReadouts.Add(new ReadoutViewModel("풍속 1", NoValue, "m/s"));
+            AuxiliaryReadouts.Add(new ReadoutViewModel("풍속 2", NoValue, "m/s"));
+            AuxiliaryReadouts.Add(new ReadoutViewModel("풍속 3", NoValue, "m/s"));
+            AuxiliaryReadouts.Add(new ReadoutViewModel("Temp (EFEM)", NoValue, "°C"));
+            AuxiliaryReadouts.Add(new ReadoutViewModel("Humidity", NoValue, "%RH"));
+            AuxiliaryReadouts.Add(new ReadoutViewModel("Temp (C/BOX)", NoValue, "°C"));
+            AuxiliaryReadouts.Add(new ReadoutViewModel("MFC 1", NoValue, "slm"));
 
-            // S3 시뮬레이션 실측값. BUS_A 가 100ms 목표를 넘는 것이 한눈에 보여야 한다.
-            PortDiagnostics.Add(new ReadoutViewModel("BUS_A", "218", "ms", true));
-            PortDiagnostics.Add(new ReadoutViewModel("BUS_B", "124", "ms"));
-            PortDiagnostics.Add(new ReadoutViewModel("BUS_C", "119", "ms"));
+            if (_runtime == null)
+            {
+                // 디자인타임 표본. 런타임에서는 이 경로를 지나지 않는다.
+                // 값이 어디서 오는지 구분하려고 대입 위치를 나눠 둔다.
+                SeedDesignTimeReadouts();
+            }
+        }
+
+        /// <summary>디자인타임에만 쓰는 예시 값을 채운다.</summary>
+        /// <remarks>
+        /// XAML 디자이너에서 빈 화면을 보지 않기 위한 것이다.
+        /// <b>런타임에서는 호출되지 않는다.</b> 이 구분이 D20 의 재발을 막는다.
+        /// </remarks>
+        private void SeedDesignTimeReadouts()
+        {
+            string[] auxiliary = { "0.42", "0.44", "0.45", "30.4", "41.2", "31.8", "12.4" };
+
+            for (int i = 0; i < AuxiliaryReadouts.Count && i < auxiliary.Length; i++)
+            {
+                AuxiliaryReadouts[i].Value = auxiliary[i];
+            }
+
+            ChamberReadouts[0].Value = "12.4";
+            ChamberReadouts[2].Value = "30.4";
+
+            PortDiagnostics.Add(new ReadoutViewModel("CH1", "218", "ms", true));
+            PortDiagnostics.Add(new ReadoutViewModel("CH1 성공률", "99.8", "%"));
+            PortDiagnostics.Add(new ReadoutViewModel("CH2", "124", "ms"));
+            PortDiagnostics.Add(new ReadoutViewModel("CH2 성공률", "99.9", "%"));
         }
 
         /// <summary>시뮬레이터 이력을 초기화한다.</summary>
@@ -648,6 +692,155 @@ namespace Esam.Hmi.ViewModels
                     _fanTemp[i] = temp.Value;
                 }
             }
+
+            RefreshAuxiliaryReadouts(snapshot);
+            RefreshPortDiagnostics();
+        }
+
+        /// <summary>보조 계측 표시를 스냅샷 값으로 갱신한다.</summary>
+        /// <param name="snapshot">현재 스냅샷.</param>
+        /// <remarks>
+        /// <para>품질은 <see cref="AuxiliaryReadings.Quality"/> 하나를 공유한다.
+        /// 장치별로 나누려면 <see cref="SystemSnapshot.Devices"/> 와 표시 슬롯의
+        /// 대응이 필요한데, 그 대응은 I/O Status 화면이 들고 있다.
+        /// 여기서는 <b>가장 나쁜 값</b>을 따르므로 과소 표시는 일어나지 않는다.</para>
+        /// <para>품질이 Bad/NoData 면 값을 지운다. 낡은 숫자를 색만 바꿔 남기면
+        /// 여전히 계측값으로 읽힌다. 이 패널은 트렌드가 아니라 현재값 표시다.</para>
+        /// </remarks>
+        private void RefreshAuxiliaryReadouts(SystemSnapshot snapshot)
+        {
+            AuxiliaryReadings aux = snapshot == null ? null : snapshot.Auxiliary;
+
+            if (aux == null)
+            {
+                return;
+            }
+
+            bool trusted = aux.Quality == Quality.Good || aux.Quality == Quality.Stale
+                           || aux.Quality == Quality.Uncertain;
+
+            bool degraded = aux.Quality != Quality.Good;
+
+            SetReadout(AuxiliaryReadouts, 0, ValueAt(aux.AirVelocities, 0), 2, trusted, degraded);
+            SetReadout(AuxiliaryReadouts, 1, ValueAt(aux.AirVelocities, 1), 2, trusted, degraded);
+            SetReadout(AuxiliaryReadouts, 2, ValueAt(aux.AirVelocities, 2), 2, trusted, degraded);
+            SetReadout(AuxiliaryReadouts, 3, aux.TemperatureEfem, 1, trusted, degraded);
+            SetReadout(AuxiliaryReadouts, 4, aux.HumidityEfem, 1, trusted, degraded);
+            SetReadout(AuxiliaryReadouts, 5, aux.TemperatureControlBox, 1, trusted, degraded);
+            SetReadout(AuxiliaryReadouts, 6, ValueAt(aux.MfcFlows, 0), 1, trusted, degraded);
+
+            SetReadout(ChamberReadouts, 0, ValueAt(aux.MfcFlows, 0), 1, trusted, degraded);
+            SetReadout(ChamberReadouts, 1, ValueAt(aux.MfcFlows, 1), 1, trusted, degraded);
+            SetReadout(ChamberReadouts, 2, aux.TemperatureEfem, 1, trusted, degraded);
+        }
+
+        /// <summary>포트별 통신 진단을 갱신한다.</summary>
+        /// <remarks>
+        /// <para>★ D20. 종전에는 <c>BUS_A 218ms</c> 처럼 하드코딩된 상수였다.
+        /// 포트 이름조차 현재 2포트 구성(CH1·CH2)과 달랐다.
+        /// S6 에서 218 ms 폴링 예산을 이 숫자로 확인하려 했다면
+        /// <b>입력한 적 없는 값을 실측으로 읽었을 것이다.</b></para>
+        /// <para>행은 한 번만 만들고 값만 제자리 갱신한다.
+        /// 매 틱 컬렉션을 다시 채우면 <c>ItemsControl</c> 이 전체를 다시 그린다(§7.4).</para>
+        /// </remarks>
+        private void RefreshPortDiagnostics()
+        {
+            IList<ModbusPortWorker> workers = _runtime.Workers;
+
+            if (workers == null)
+            {
+                return;
+            }
+
+            if (PortDiagnostics.Count != workers.Count * 2)
+            {
+                PortDiagnostics.Clear();
+
+                foreach (ModbusPortWorker worker in workers)
+                {
+                    PortDiagnostics.Add(new ReadoutViewModel(worker.PortId, NoValue, "ms"));
+                    PortDiagnostics.Add(new ReadoutViewModel(worker.PortId + " 성공률", NoValue, "%"));
+                }
+            }
+
+            for (int i = 0; i < workers.Count; i++)
+            {
+                PortStatistics statistics = workers[i].Statistics;
+
+                if (statistics == null)
+                {
+                    continue;
+                }
+
+                ReadoutViewModel cycle = PortDiagnostics[i * 2];
+                ReadoutViewModel rate = PortDiagnostics[(i * 2) + 1];
+
+                if (statistics.TotalTransactions == 0)
+                {
+                    // 아직 한 번도 돌지 않았다. 0 ms 로 적으면 가장 빠른 포트로 보인다.
+                    cycle.Value = NoValue;
+                    cycle.ValueBrush = HmiPalette.TextMuted;
+                    rate.Value = NoValue;
+                    rate.ValueBrush = HmiPalette.TextMuted;
+                    continue;
+                }
+
+                cycle.Value = Format(statistics.LastCycleMs, 0);
+
+                // 폴링 예산은 218 ms 로 현실화했다(Open Issue #1).
+                // 그 값을 넘으면 제어 주기가 설계와 달라지므로 눈에 띄어야 한다.
+                cycle.ValueBrush = statistics.LastCycleMs > PollingBudgetMs
+                    ? HmiPalette.Warn
+                    : HmiPalette.TextPrimary;
+
+                rate.Value = Format(statistics.SuccessRatePercent, 1);
+
+                rate.ValueBrush = statistics.SuccessRatePercent < 99.0
+                    ? HmiPalette.Bad
+                    : HmiPalette.TextPrimary;
+            }
+        }
+
+        /// <summary>표시 행 하나에 값을 채운다.</summary>
+        /// <param name="rows">표시 행 목록.</param>
+        /// <param name="index">행 번호.</param>
+        /// <param name="value">값. null 이면 미수집이다.</param>
+        /// <param name="decimals">소수 자릿수.</param>
+        /// <param name="trusted">값을 표시해도 되는 품질인지 여부.</param>
+        /// <param name="degraded">품질이 정상보다 낮은지 여부.</param>
+        private static void SetReadout(
+            ObservableCollection<ReadoutViewModel> rows,
+            int index,
+            double? value,
+            int decimals,
+            bool trusted,
+            bool degraded)
+        {
+            if (index >= rows.Count)
+            {
+                return;
+            }
+
+            ReadoutViewModel row = rows[index];
+
+            if (!value.HasValue || !trusted)
+            {
+                row.Value = NoValue;
+                row.ValueBrush = HmiPalette.TextMuted;
+                return;
+            }
+
+            row.Value = Format(value.Value, decimals);
+            row.ValueBrush = degraded ? HmiPalette.Warn : HmiPalette.TextPrimary;
+        }
+
+        /// <summary>고정 길이 목록에서 값을 꺼낸다.</summary>
+        /// <param name="values">값 목록.</param>
+        /// <param name="index">인덱스.</param>
+        /// <returns>값. 범위를 벗어나면 null.</returns>
+        private static double? ValueAt(IReadOnlyList<double?> values, int index)
+        {
+            return values == null || index >= values.Count ? null : values[index];
         }
 
         /// <summary>지정 센서의 압력을 읽는다. 읽을 수 없으면 null.</summary>

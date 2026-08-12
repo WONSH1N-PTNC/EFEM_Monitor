@@ -1,3 +1,4 @@
+using System.Globalization;
 using Esam.Communication.Configuration;
 
 namespace Esam.Services
@@ -102,8 +103,21 @@ namespace Esam.Services
         //
         // 260801 판은 D10.1~8 로 적었으나 마스크 값은 같았다. 비트 인덱스는 변하지 않았다.
 
-        /// <summary>송풍팬 정지 알람 접두. 뒤에 0~4 가 붙는다(bit1 ~ bit5).</summary>
-        public const string DiFanStopPrefix = "di.fanStop";
+        /// <summary>송풍팬 정지 알람 키를 만든다(bit1 ~ bit5).</summary>
+        /// <param name="index">송풍팬 번호 - 1 (0~4).</param>
+        /// <returns><c>device-map.json</c> 과 같은 형식의 키.</returns>
+        /// <remarks>
+        /// <para><b>접두 상수를 노출하지 않고 메서드로 바꾼 이유가 D19 다.</b>
+        /// 종전에는 호출부가 <c>"di.fanStop" + index</c> 로 조립했고, 설정 파일은
+        /// <c>"di.fanStop.0"</c> 이었다. 점 하나 차이로 조회가 항상 실패해
+        /// <b>송풍팬 정지·과열 알람 10건이 영원히 울리지 않았다.</b></para>
+        /// <para>조립 규칙이 호출부에 있으면 규칙이 호출부 수만큼 생긴다.
+        /// 여기 한 곳에 두어야 다음에 형식이 바뀔 때 한 번만 고친다.</para>
+        /// </remarks>
+        public static string DiFanStop(int index)
+        {
+            return Indexed("di.fanStop", index);
+        }
 
         /// <summary>컨트롤박스 상부 팬 정지(bit6).</summary>
         public const string DiControlBoxFanTop = "di.controlBoxFanT";
@@ -135,11 +149,25 @@ namespace Esam.Services
 
         // ── PLC 온도 ────────────────────────────────────────────────────────────
 
-        /// <summary>BLDC 온도 접두. 뒤에 0~4 가 붙는다(0x0064 ~ 0x0068, K형 열전대).</summary>
-        public const string TempFanPrefix = "temp.fan";
+        /// <summary>BLDC 온도 키를 만든다(0x0064 ~ 0x0068, K형 열전대).</summary>
+        /// <param name="index">송풍팬 번호 - 1 (0~4).</param>
+        /// <returns><c>device-map.json</c> 과 같은 형식의 키.</returns>
+        public static string TempFan(int index)
+        {
+            return Indexed("temp.fan", index);
+        }
 
-        /// <summary>BLDC 온도센서 단선 접두. 뒤에 0~4 가 붙는다(0x006E ~ 0x0072).</summary>
-        public const string TempFaultPrefix = "temp.fault";
+        /// <summary>BLDC 온도센서 단선 키를 만든다(0x006E ~ 0x0072).</summary>
+        /// <param name="index">송풍팬 번호 - 1 (0~4).</param>
+        /// <returns><c>device-map.json</c> 과 같은 형식의 키.</returns>
+        /// <remarks>
+        /// <b>아직 소비하는 코드가 없다.</b> 열전대가 끊기면 온도가 0 ℃ 로 읽히는데,
+        /// 지금은 그것을 정상값과 구분하지 못한다. 별도 항목으로 남아 있다.
+        /// </remarks>
+        public static string TempFault(int index)
+        {
+            return Indexed("temp.fault", index);
+        }
 
         /// <summary>
         /// 판넬(컨트롤박스) 온도. <b>현재 배선된 채널이 없다.</b>
@@ -171,5 +199,19 @@ namespace Esam.Services
 
         /// <summary>FFU 회전수 [RPM].</summary>
         public const string FfuRpm = "ffuRpm";
+
+        /// <summary>"접두.인덱스" 형식의 측정점 키를 만든다.</summary>
+        /// <param name="prefix">접두(예: "di.fanStop").</param>
+        /// <param name="index">0 이상의 인덱스.</param>
+        /// <returns>조립된 키.</returns>
+        /// <remarks>
+        /// 인덱스는 <see cref="CultureInfo.InvariantCulture"/> 로 서식한다.
+        /// 아라비아 숫자가 아닌 자릿수를 쓰는 지역 설정에서 키가 달라지면
+        /// 조회가 조용히 실패한다.
+        /// </remarks>
+        private static string Indexed(string prefix, int index)
+        {
+            return prefix + "." + index.ToString(CultureInfo.InvariantCulture);
+        }
     }
 }

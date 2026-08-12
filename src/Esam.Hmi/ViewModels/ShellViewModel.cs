@@ -15,7 +15,10 @@ namespace Esam.Hmi.ViewModels
         ConfigRecipe = 1,
 
         /// <summary>설정 — 통신·통로·표시.</summary>
-        ConfigSystem = 2
+        ConfigSystem = 2,
+
+        /// <summary>I/O 상태 — 연결 램프·PLC 입력·원시값.</summary>
+        IoStatus = 3
     }
 
     /// <summary>
@@ -48,6 +51,7 @@ namespace Esam.Hmi.ViewModels
             Banner = new SystemBannerViewModel(host);
             Recipe = new RecipeEditorViewModel(host);
             Settings = new SettingsViewModel(host, OnRuntimeRebuilt);
+            IoStatus = new IoStatusViewModel(runtime);
 
             SelectScreenCommand = new RelayCommand(OnSelectScreen);
             ToggleWriteAccessCommand = new RelayCommand(OnToggleWriteAccess);
@@ -71,6 +75,12 @@ namespace Esam.Hmi.ViewModels
             Dashboard = new DashboardViewModel(runtime);
             Dashboard.Start();
 
+            // I/O 화면도 런타임 참조를 생성자에서 받는다. 옛 인스턴스를 두면
+            // 사라진 런타임의 스냅샷을 계속 읽어 램프가 과거 상태로 굳는다.
+            IoStatus.Stop();
+            IoStatus = new IoStatusViewModel(runtime);
+            IoStatus.Start();
+
             if (runtime != null)
             {
                 // 포트 열기 실패는 EsamRuntime.Start 가 구성 경고로 처리한다.
@@ -90,6 +100,7 @@ namespace Esam.Hmi.ViewModels
             Banner.Refresh();
 
             Raise("Dashboard");
+            Raise("IoStatus");
         }
 
         /// <summary>운전 대시보드.</summary>
@@ -103,6 +114,9 @@ namespace Esam.Hmi.ViewModels
 
         /// <summary>레시피 편집기.</summary>
         public RecipeEditorViewModel Recipe { get; private set; }
+
+        /// <summary>I/O 상태 화면.</summary>
+        public IoStatusViewModel IoStatus { get; private set; }
 
         /// <summary>화면 선택 명령.</summary>
         public ICommand SelectScreenCommand { get; private set; }
@@ -126,6 +140,12 @@ namespace Esam.Hmi.ViewModels
         public bool IsConfigSystem
         {
             get { return _screen == ShellScreen.ConfigSystem; }
+        }
+
+        /// <summary>I/O 상태 화면을 보고 있는지 여부.</summary>
+        public bool IsIoStatus
+        {
+            get { return _screen == ShellScreen.IoStatus; }
         }
 
         /// <summary>쓰기가 허용된 상태인지 여부.</summary>
@@ -164,6 +184,14 @@ namespace Esam.Hmi.ViewModels
                 _screen = ShellScreen.ConfigSystem;
                 Settings.Load();
             }
+            else if (string.Equals(name, "IoStatus", StringComparison.OrdinalIgnoreCase))
+            {
+                _screen = ShellScreen.IoStatus;
+
+                // 구성이 바뀌었을 수 있다. 표의 뼈대를 다시 만든다.
+                // 값은 타이머가 채운다.
+                IoStatus.Rebuild(_host == null || _host.Runtime == null ? null : _host.Runtime.Map);
+            }
             else
             {
                 _screen = ShellScreen.Operate;
@@ -172,6 +200,7 @@ namespace Esam.Hmi.ViewModels
             Raise("IsOperate");
             Raise("IsConfigRecipe");
             Raise("IsConfigSystem");
+            Raise("IsIoStatus");
         }
 
         /// <summary>쓰기 잠금을 토글한다.</summary>

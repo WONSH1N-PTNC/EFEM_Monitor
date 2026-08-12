@@ -63,6 +63,13 @@
                                  IsChecked="{Binding IsConfigSystem, Mode=OneWay}"
                                  Command="{Binding SelectScreenCommand}"
                                  CommandParameter="ConfigSystem"
+                                 Style="{StaticResource NavButtonStyle}"
+                                 Margin="0,0,0,6" />
+
+                    <RadioButton Content="I/O" GroupName="ScreenGroup"
+                                 IsChecked="{Binding IsIoStatus, Mode=OneWay}"
+                                 Command="{Binding SelectScreenCommand}"
+                                 CommandParameter="IoStatus"
                                  Style="{StaticResource NavButtonStyle}" />
                 </StackPanel>
 
@@ -119,6 +126,21 @@
                     </Style>
                 </views:RecipeEditorView.Style>
             </views:RecipeEditorView>
+
+            <views:IoStatusView DataContext="{Binding IoStatus}">
+                <views:IoStatusView.Style>
+                    <Style TargetType="views:IoStatusView">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.IsIoStatus,
+                                             RelativeSource={RelativeSource AncestorType=Window}}"
+                                         Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:IoStatusView.Style>
+            </views:IoStatusView>
 
             <views:SettingsView DataContext="{Binding Settings}">
                 <views:SettingsView.Style>

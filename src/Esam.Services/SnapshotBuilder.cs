@@ -153,6 +153,9 @@ namespace Esam.Services
             Dictionary<string, FanState> fans =
                 new Dictionary<string, FanState>(StringComparer.OrdinalIgnoreCase);
 
+            Dictionary<string, DeviceHealth> devices =
+                new Dictionary<string, DeviceHealth>(StringComparer.OrdinalIgnoreCase);
+
             PlcDigitalState plc = null;
             AuxiliaryAccumulator aux = new AuxiliaryAccumulator();
 
@@ -160,13 +163,23 @@ namespace Esam.Services
             {
                 foreach (DeviceInstanceDefinition device in _map.Devices)
                 {
-                    if (device == null || !device.Enabled || string.IsNullOrEmpty(device.Id))
+                    if (device == null || string.IsNullOrEmpty(device.Id))
                     {
                         continue;
                     }
 
                     DeviceTypeDefinition type = _map.FindType(device.Type);
                     string driver = type == null ? null : type.Driver;
+
+                    // 상태 램프는 꺼 둔 디바이스도 그린다. 목록에서 빼면 화면에서
+                    // "구성에 아예 없음" 과 "구성에는 있는데 꺼 두었음" 이 같아진다.
+                    DeviceHealth health = BuildHealth(device, driver, nowUtc);
+                    devices[device.Id] = health;
+
+                    if (!device.Enabled)
+                    {
+                        continue;
+                    }
 
                     switch (driver)
                     {
@@ -188,22 +201,27 @@ namespace Esam.Services
 
                         case PointKeys.DriverTempHumidity:
                             aux.ApplyTempHumidity(this, device.Id, nowUtc);
+                            aux.Observe(health);
                             break;
 
                         case PointKeys.DriverAirVelocity:
                             aux.ApplyVelocity(this, device.Id, nowUtc);
+                            aux.Observe(health);
                             break;
 
                         case PointKeys.DriverParticle:
                             aux.ApplyParticle(this, device.Id, nowUtc);
+                            aux.Observe(health);
                             break;
 
                         case PointKeys.DriverMfc:
                             aux.ApplyMfc(this, device.Id, nowUtc);
+                            aux.Observe(health);
                             break;
 
                         case PointKeys.DriverFfu:
                             aux.ApplyFfu(this, device.Id, nowUtc);
+                            aux.Observe(health);
                             break;
 
                         default:
@@ -217,7 +235,110 @@ namespace Esam.Services
                 nowUtc, pressures, valves, fans,
                 plc ?? PlcDigitalState.NoData(),
                 aux.ToReadings(nowUtc),
-                control, alarms);
+                control, alarms, devices);
+        }
+
+        /// <summary>디바이스 1대의 통신 건강 상태를 만든다.</summary>
+        /// <param name="device">디바이스 정의.</param>
+        /// <param name="driver">드라이버 이름. 알 수 없으면 null.</param>
+        /// <param name="nowUtc">현재 시각(UTC).</param>
+        /// <returns>건강 상태.</returns>
+        /// <remarks>
+        /// <para><see cref="Find"/> 를 거쳐 조회하므로 Stale 격하가 그대로 반영된다.
+        /// 여기서 <c>_points</c> 를 직접 읽으면 화면만 "정상" 으로 보이고
+        /// 제어는 Stale 로 판정하는 어긋난 상태가 된다. 판정 근거는 한 곳이어야 한다.</para>
+        /// <para>측정점 기록이 아예 없으면 <see cref="Quality.NoData"/> 다.
+        /// 이는 "한 번도 응답하지 않았다" 는 뜻이며, 응답했다가 끊긴
+        /// <see cref="Quality.Bad"/> 와 구분해야 배선 문제인지 통신 두절인지 갈린다.</para>
+        /// </remarks>
+        private DeviceHealth BuildHealth(
+            DeviceInstanceDefinition device, string driver, DateTime nowUtc)
+        {
+            List<string> paths;
+
+            if (!_pathsByDevice.TryGetValue(device.Id, out paths) || paths.Count == 0)
+            {
+                return DeviceHealth.NoData(
+                    device.Id, device.Name, driver, device.Port, device.Enabled);
+            }
+
+            int worstRank = 0;
+            Quality worst = Quality.Good;
+            int good = 0;
+            DateTime latest = DateTime.MinValue;
+
+            foreach (string path in paths)
+            {
+                string key = KeyOf(path, device.Id);
+                PointSample sample = Find(device.Id, key, nowUtc);
+
+                if (sample == null)
+                {
+                    continue;
+                }
+
+                if (sample.Quality == Quality.Good)
+                {
+                    good++;
+                }
+
+                int rank = RankOf(sample.Quality);
+
+                if (rank > worstRank)
+                {
+                    worstRank = rank;
+                    worst = sample.Quality;
+                }
+
+                if (sample.TimestampUtc > latest)
+                {
+                    latest = sample.TimestampUtc;
+                }
+            }
+
+            return new DeviceHealth(
+                device.Id, device.Name, driver, device.Port, device.Enabled,
+                worst, latest, paths.Count, good);
+        }
+
+        /// <summary>"디바이스ID.키" 경로에서 키 부분만 떼어낸다.</summary>
+        /// <param name="path">전체 경로.</param>
+        /// <param name="deviceId">디바이스 ID.</param>
+        /// <returns>키. 접두사가 맞지 않으면 경로를 그대로 반환한다.</returns>
+        private static string KeyOf(string path, string deviceId)
+        {
+            string prefix = deviceId + ".";
+
+            return path != null && path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                ? path.Substring(prefix.Length)
+                : path;
+        }
+
+        /// <summary>품질을 "나쁜 정도" 순위로 바꾼다.</summary>
+        /// <param name="quality">품질.</param>
+        /// <returns>클수록 나쁜 순위.</returns>
+        /// <remarks>
+        /// 열거형 값을 그대로 비교하지 않는 이유는 <see cref="Quality.NoData"/> 가 0 이기 때문이다.
+        /// 숫자로 최댓값을 고르면 <b>수신한 적 없는 측정점이 정상보다 나은 것으로 취급된다.</b>
+        /// 램프가 초록으로 남는 가장 나쁜 종류의 오표시다.
+        /// </remarks>
+        private static int RankOf(Quality quality)
+        {
+            switch (quality)
+            {
+                case Quality.Good:
+                    return 1;
+
+                case Quality.Uncertain:
+                    return 2;
+
+                case Quality.Stale:
+                    return 3;
+
+                default:
+                    // NoData 와 Bad 는 둘 다 "이 값을 쓰면 안 된다" 이다.
+                    return 4;
+            }
         }
 
         /// <summary>차압센서 판독값을 만든다.</summary>
@@ -353,10 +474,7 @@ namespace Esam.Services
 
             for (int i = 0; i < 5; i++)
             {
-                PointSample sample = Find(
-                    device.Id,
-                    PointKeys.DiFanStopPrefix + i.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    nowUtc);
+                PointSample sample = Find(device.Id, PointKeys.DiFanStop(i), nowUtc);
 
                 if (sample != null)
                 {
@@ -371,10 +489,7 @@ namespace Esam.Services
                 }
 
                 // 팬 온도는 PLC 가 읽지만 표시상으로는 보조 계측이다.
-                PointSample temp = Find(
-                    device.Id,
-                    PointKeys.TempFanPrefix + i.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    nowUtc);
+                PointSample temp = Find(device.Id, PointKeys.TempFan(i), nowUtc);
 
                 if (temp != null && temp.Quality == Quality.Good)
                 {
@@ -521,6 +636,41 @@ namespace Esam.Services
 
             public double? FfuRpm { get; set; }
 
+            private int _worstRank;
+            private Quality _quality = Quality.NoData;
+            private DateTime _latestUtc = DateTime.MinValue;
+
+            /// <summary>보조 계측 디바이스 1대의 상태를 대표값에 반영한다.</summary>
+            /// <param name="health">디바이스 건강 상태.</param>
+            /// <remarks>
+            /// <para>종전에는 <see cref="AuxiliaryReadings.Quality"/> 에 <c>Quality.Good</c> 을
+            /// 그대로 적어 넣었다. <b>온습도·풍속 통신이 전부 끊겨도 "정상" 으로 보고되는
+            /// 값이었다.</b> 지금은 읽는 곳이 없어 사고가 나지 않았을 뿐이고,
+            /// 다음에 이 값을 믿고 쓰는 코드가 붙으면 그때 조용히 틀린다.</para>
+            /// <para>대표값은 <b>가장 나쁜 것</b>을 고른다. 평균이나 다수결로 정하면
+            /// 다섯 중 하나가 죽어도 대표값은 정상으로 남는다.</para>
+            /// </remarks>
+            public void Observe(DeviceHealth health)
+            {
+                if (health == null || !health.IsPolled)
+                {
+                    return;
+                }
+
+                int rank = RankOf(health.Quality);
+
+                if (rank > _worstRank)
+                {
+                    _worstRank = rank;
+                    _quality = health.Quality;
+                }
+
+                if (health.LastUpdateUtc > _latestUtc)
+                {
+                    _latestUtc = health.LastUpdateUtc;
+                }
+            }
+
             public void SetFanTemperature(int index, double value)
             {
                 if (index >= 0 && index < _fanTemperatures.Length)
@@ -613,8 +763,8 @@ namespace Esam.Services
                     FfuRpm,
                     _mfcFlows,
                     _mfcSetpoints,
-                    Quality.Good,
-                    nowUtc);
+                    _quality,
+                    _latestUtc == DateTime.MinValue ? nowUtc : _latestUtc);
             }
         }
     }

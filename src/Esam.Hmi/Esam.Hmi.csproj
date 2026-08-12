@@ -120,6 +120,10 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+    <Page Include="Views\IoStatusView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Views\SettingsView.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
@@ -159,6 +163,9 @@
       <DependentUpon>RecipeEditorView.xaml</DependentUpon>
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="Views\IoStatusView.xaml.cs">
+      <DependentUpon>IoStatusView.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Views\SettingsView.xaml.cs">
       <DependentUpon>SettingsView.xaml</DependentUpon>
       <SubType>Code</SubType>
@@ -176,6 +183,8 @@
     <Compile Include="ViewModels\RecipeEditorViewModel.cs" />
     <Compile Include="ViewModels\ShellViewModel.cs" />
     <Compile Include="ViewModels\SettingsViewModel.cs" />
+    <Compile Include="ViewModels\IoStatusViewModel.cs" />
+    <Compile Include="ViewModels\IoStatusRowViewModels.cs" />
     <Compile Include="ViewModels\ChainCardViewModel.cs" />
     <Compile Include="ViewModels\GaugeViewModel.cs" />
     <Compile Include="ViewModels\AlarmRowViewModel.cs" />

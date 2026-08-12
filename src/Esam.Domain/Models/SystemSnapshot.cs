@@ -27,6 +27,10 @@ namespace Esam.Domain.Models
             new ReadOnlyDictionary<string, FanState>(
                 new Dictionary<string, FanState>(StringComparer.OrdinalIgnoreCase));
 
+        private static readonly ReadOnlyDictionary<string, DeviceHealth> EmptyDevices =
+            new ReadOnlyDictionary<string, DeviceHealth>(
+                new Dictionary<string, DeviceHealth>(StringComparer.OrdinalIgnoreCase));
+
         /// <summary>스냅샷 생성 시각(UTC).</summary>
         public DateTime TimestampUtc { get; private set; }
 
@@ -38,6 +42,13 @@ namespace Esam.Domain.Models
 
         /// <summary>송풍팬 상태. 키는 팬 ID("F-1" 등).</summary>
         public IReadOnlyDictionary<string, FanState> Fans { get; private set; }
+
+        /// <summary>디바이스별 통신 건강 상태. 키는 디바이스 ID.</summary>
+        /// <remarks>
+        /// 값 모델(<see cref="Pressures"/> 등)과 달리 <b>폴링하지 않는 디바이스도 포함한다.</b>
+        /// I/O Status 화면이 "구성에 없음" 과 "꺼 두었음" 을 구분해 표시하기 위한 것이다.
+        /// </remarks>
+        public IReadOnlyDictionary<string, DeviceHealth> Devices { get; private set; }
 
         /// <summary>PLC 디지털 입력 상태.</summary>
         public PlcDigitalState Plc { get; private set; }
@@ -60,6 +71,12 @@ namespace Esam.Domain.Models
         /// <param name="auxiliary">보조 계측값(null 이면 Empty).</param>
         /// <param name="control">제어 상태(null 이면 Initial).</param>
         /// <param name="alarms">알람 요약(null 이면 None).</param>
+        /// <param name="devices">디바이스별 통신 건강 상태(null 허용).</param>
+        /// <remarks>
+        /// <paramref name="devices"/> 를 선택 인자로 둔 이유는 기존 호출부를 그대로 두기
+        /// 위해서다. 필수로 만들면 스냅샷을 직접 만드는 테스트 수백 곳이 한꺼번에 깨지고,
+        /// 그 수정은 검증이 아니라 기계적 치환이 된다.
+        /// </remarks>
         public SystemSnapshot(
             DateTime timestampUtc,
             IDictionary<string, PressureReading> pressures,
@@ -68,7 +85,8 @@ namespace Esam.Domain.Models
             PlcDigitalState plc,
             AuxiliaryReadings auxiliary,
             ControlStatus control,
-            AlarmSummary alarms)
+            AlarmSummary alarms,
+            IDictionary<string, DeviceHealth> devices = null)
         {
             TimestampUtc = timestampUtc;
 
@@ -87,6 +105,11 @@ namespace Esam.Domain.Models
                 ? (IReadOnlyDictionary<string, FanState>)EmptyFans
                 : new ReadOnlyDictionary<string, FanState>(
                     new Dictionary<string, FanState>(fans, StringComparer.OrdinalIgnoreCase));
+
+            Devices = devices == null
+                ? (IReadOnlyDictionary<string, DeviceHealth>)EmptyDevices
+                : new ReadOnlyDictionary<string, DeviceHealth>(
+                    new Dictionary<string, DeviceHealth>(devices, StringComparer.OrdinalIgnoreCase));
 
             Plc = plc ?? PlcDigitalState.NoData();
             Auxiliary = auxiliary ?? AuxiliaryReadings.Empty;
@@ -125,6 +148,20 @@ namespace Esam.Domain.Models
             if (!string.IsNullOrEmpty(valveId) && Valves.TryGetValue(valveId, out state))
             {
                 return state;
+            }
+
+            return null;
+        }
+
+        /// <summary>지정한 ID 의 디바이스 건강 상태를 찾는다.</summary>
+        /// <param name="deviceId">디바이스 ID.</param>
+        /// <returns>건강 상태. 없으면 null.</returns>
+        public DeviceHealth FindDevice(string deviceId)
+        {
+            DeviceHealth health;
+            if (!string.IsNullOrEmpty(deviceId) && Devices.TryGetValue(deviceId, out health))
+            {
+                return health;
             }
 
             return null;
