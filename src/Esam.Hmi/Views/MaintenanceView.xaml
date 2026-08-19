@@ -1,0 +1,296 @@
+<UserControl x:Class="Esam.Hmi.Views.MaintenanceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignWidth="1400" d:DesignHeight="800"
+             Background="{StaticResource BgRootBrush}"
+             FontFamily="{StaticResource UiFont}">
+
+    <!--
+        지금까지의 쓰기는 전부 설정 파일이었다. 여기는 밸브와 팬을 직접 움직인다.
+        관문이 세 겹이다 — 쓰기 잠금, 단계 판정, 인터록 판정.
+        화면을 떠나면 수동 조작을 자동으로 정리한다.
+    -->
+
+    <UserControl.Resources>
+        <Style x:Key="MtCellStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style x:Key="MtLabelCellStyle" TargetType="TextBlock" BasedOn="{StaticResource MtCellStyle}">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+        </Style>
+
+        <Style x:Key="MtHeaderStyle" TargetType="TextBlock" BasedOn="{StaticResource MicroLabelStyle}">
+            <Setter Property="Margin" Value="0,0,8,6" />
+        </Style>
+
+        <Style x:Key="MtFieldStyle" TargetType="TextBox">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+            <Setter Property="CaretBrush" Value="{StaticResource AccentBrush}" />
+            <Setter Property="Background" Value="{StaticResource BgInsetBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="Width" Value="90" />
+            <Setter Property="Margin" Value="0,0,8,0" />
+            <Style.Triggers>
+                <Trigger Property="IsFocused" Value="True">
+                    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ══ 머리말 ═════════════════════════════════════════════════════ -->
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="MAINTENANCE — 영점 교정 · 수동 조작 · 원점 복귀"
+                       FontSize="18" FontWeight="SemiBold"
+                       Foreground="{StaticResource TextPrimaryBrush}" />
+            <TextBlock Text="액추에이터를 직접 움직입니다. 화면을 떠나면 수동 조작이 자동으로 정리됩니다."
+                       FontSize="11" Margin="0,4,0,0"
+                       Foreground="{StaticResource TextMutedBrush}" />
+        </StackPanel>
+
+        <!-- ══ 조작을 막는 사유 ═══════════════════════════════════════════ -->
+        <Border Grid.Row="1" Padding="12,8" Margin="0,10,0,0">
+            <Border.Style>
+                <Style TargetType="Border" BasedOn="{StaticResource InsetBorderStyle}">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding BlockReason}" Value="{x:Null}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+
+            <TextBlock Text="{Binding BlockReason}"
+                       FontSize="12" TextWrapping="Wrap"
+                       Foreground="{StaticResource StatusWarnBrush}" />
+        </Border>
+
+        <!-- ══ 본문 ═══════════════════════════════════════════════════════ -->
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.5*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- ── 영점 교정 ──────────────────────────────────────────────── -->
+            <Border Grid.Column="0" Style="{StaticResource CardBorderStyle}"
+                    Margin="0,0,7,0" Padding="14">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top">
+                        <TextBlock Text="센서 영점 교정" Style="{StaticResource MtHeaderStyle}" />
+
+                        <TextBlock Text="대기압 상태에서 취득하십시오. 보정 전 값의 평균을 새 영점으로 제안합니다."
+                                   FontSize="10" Margin="0,0,0,8" TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextMutedBrush}" />
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Button Content="영점 취득"
+                                    Command="{Binding StartSamplingCommand}"
+                                    Style="{StaticResource ConsoleButtonStyle}"
+                                    Padding="14,6" Margin="0,0,8,0" />
+
+                            <Button Content="취소"
+                                    Command="{Binding CancelSamplingCommand}"
+                                    Style="{StaticResource ConsoleButtonStyle}"
+                                    Padding="14,6" Margin="0,0,8,0" />
+
+                            <Button Content="적용 · 저장"
+                                    Command="{Binding SaveOffsetsCommand}"
+                                    Style="{StaticResource ConsoleButtonStyle}"
+                                    Padding="14,6" Margin="0,0,8,0" />
+
+                            <Button Content="되돌리기"
+                                    Command="{Binding RevertOffsetsCommand}"
+                                    Style="{StaticResource ConsoleButtonStyle}"
+                                    Padding="14,6" Margin="0,0,12,0" />
+
+                            <TextBlock Text="{Binding SamplingProgress}"
+                                       Style="{StaticResource MtLabelCellStyle}" />
+                        </StackPanel>
+
+                        <Grid Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="70" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="60" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0" Text="센서" Style="{StaticResource MtHeaderStyle}" />
+                            <TextBlock Grid.Column="1" Text="측정 [Pa]" Style="{StaticResource MtHeaderStyle}" />
+                            <TextBlock Grid.Column="2" Text="현재 영점" Style="{StaticResource MtHeaderStyle}" />
+                            <TextBlock Grid.Column="3" Text="제안 영점" Style="{StaticResource MtHeaderStyle}" />
+                            <TextBlock Grid.Column="4" Text="차이" Style="{StaticResource MtHeaderStyle}" />
+                            <TextBlock Grid.Column="5" Text="표본" Style="{StaticResource MtHeaderStyle}" />
+                        </Grid>
+                    </StackPanel>
+
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl ItemsSource="{Binding Sensors}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,3">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="70" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="60" />
+                                        </Grid.ColumnDefinitions>
+
+                                        <TextBlock Grid.Column="0" Text="{Binding DeviceId}"
+                                                   Style="{StaticResource MtLabelCellStyle}" />
+                                        <TextBlock Grid.Column="1" Text="{Binding MeasuredText}"
+                                                   Style="{StaticResource MtCellStyle}"
+                                                   Foreground="{Binding MeasuredBrush}" />
+                                        <TextBlock Grid.Column="2" Text="{Binding CurrentText}"
+                                                   Style="{StaticResource MtCellStyle}" />
+                                        <TextBlock Grid.Column="3" Text="{Binding ProposedText}"
+                                                   Style="{StaticResource MtCellStyle}"
+                                                   Foreground="{StaticResource AccentBrush}" />
+                                        <TextBlock Grid.Column="4" Text="{Binding DeltaText}"
+                                                   Style="{StaticResource MtLabelCellStyle}" />
+                                        <TextBlock Grid.Column="5" Text="{Binding SampleText}"
+                                                   Style="{StaticResource MtLabelCellStyle}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <!-- ── 수동 조작 ──────────────────────────────────────────────── -->
+            <Border Grid.Column="1" Style="{StaticResource CardBorderStyle}"
+                    Margin="7,0,0,0" Padding="14">
+                <StackPanel>
+                    <TextBlock Text="수동 조작" Style="{StaticResource MtHeaderStyle}" />
+
+                    <TextBlock Text="자동 운전을 정지하고 원점 복귀가 끝난 뒤에만 조작할 수 있습니다. 인터록은 해제되지 않습니다."
+                               FontSize="10" Margin="0,0,0,12" TextWrapping="Wrap"
+                               Foreground="{StaticResource TextMutedBrush}" />
+
+                    <TextBlock Text="스로틀밸브" Style="{StaticResource MtHeaderStyle}" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <ComboBox ItemsSource="{Binding Valves}"
+                                  SelectedItem="{Binding SelectedValveId}"
+                                  Width="90" Margin="0,0,8,0" FontSize="12" />
+
+                        <TextBox Style="{StaticResource MtFieldStyle}"
+                                 Text="{Binding ValvePercent, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <TextBlock Text="%" Style="{StaticResource MtLabelCellStyle}" Margin="0,0,8,0" />
+
+                        <Button Content="지령"
+                                Command="{Binding SetValveCommand}"
+                                Style="{StaticResource ConsoleButtonStyle}"
+                                Padding="14,5" />
+                    </StackPanel>
+
+                    <Button Content="원점 복귀"
+                            Command="{Binding HomeValveCommand}"
+                            Style="{StaticResource ConsoleButtonStyle}"
+                            HorizontalAlignment="Left"
+                            Padding="14,5" Margin="0,0,0,16" />
+
+                    <TextBlock Text="송풍팬" Style="{StaticResource MtHeaderStyle}" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                        <ComboBox ItemsSource="{Binding Fans}"
+                                  SelectedItem="{Binding SelectedFanId}"
+                                  Width="90" Margin="0,0,8,0" FontSize="12" />
+
+                        <TextBox Style="{StaticResource MtFieldStyle}"
+                                 Text="{Binding FanRpm, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <TextBlock Text="RPM" Style="{StaticResource MtLabelCellStyle}" Margin="0,0,8,0" />
+
+                        <Button Content="지령"
+                                Command="{Binding SetFanCommand}"
+                                Style="{StaticResource ConsoleButtonStyle}"
+                                Padding="14,5" />
+                    </StackPanel>
+
+                    <!--
+                        수동 조작이 살아 있는 동안에만 보인다.
+                        화면을 떠나면 자동으로 실행되지만, 떠나지 않고 정리하고 싶을 때가 있다.
+                    -->
+                    <Border Padding="12,8">
+                        <Border.Style>
+                            <Style TargetType="Border" BasedOn="{StaticResource InsetBorderStyle}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsManualActive}" Value="True">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Border.Style>
+
+                        <StackPanel>
+                            <TextBlock Text="수동 조작이 살아 있습니다. 자동 운전으로 돌아가기 전에 정리하십시오."
+                                       FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"
+                                       Foreground="{StaticResource StatusWarnBrush}" />
+
+                            <Button Content="밸브 닫고 팬 정지"
+                                    Command="{Binding ParkCommand}"
+                                    Style="{StaticResource ConsoleButtonStyle}"
+                                    HorizontalAlignment="Left"
+                                    Padding="14,5" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- ══ 하단 — 사유·상태 ═══════════════════════════════════════════ -->
+        <StackPanel Grid.Row="3" Margin="0,12,0,0">
+            <ItemsControl ItemsSource="{Binding Errors}" Margin="0,0,0,6">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}"
+                                   FontSize="11" TextWrapping="Wrap" Margin="0,1"
+                                   Foreground="{StaticResource StatusBadBrush}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Text="{Binding StatusText}" FontSize="12">
+                <TextBlock.Style>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding HasError}" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource StatusBadBrush}" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TextBlock.Style>
+            </TextBlock>
+        </StackPanel>
+    </Grid>
+</UserControl>

@@ -104,6 +104,12 @@ namespace Esam.Domain.Alarms
         /// </remarks>
         private readonly object _gate = new object();
 
+        /// <summary>안전 입력을 한 번이라도 정상 수신했는지 여부.</summary>
+        private bool _safetyInputSeen;
+
+        /// <summary>첫 판정 시각(UTC). 기동 유예의 기준점이다.</summary>
+        private DateTime _firstEvaluationUtc = DateTime.MinValue;
+
         /// <summary>인터록 판정기를 생성한다.</summary>
         /// <param name="rules">규칙 목록. null 이면 기본 규칙 집합을 사용한다.</param>
         public InterlockEvaluator(IEnumerable<InterlockRule> rules)
@@ -307,7 +313,7 @@ namespace Esam.Domain.Alarms
                 // "구성되지 않았다"는 사실 자체는 런타임 조립 경고로 보고한다.
                 systemStop |= EvaluateSystemRule(
                     "IL-04",
-                    config.SafetyInputsConfigured && snapshot.Plc.Quality != Quality.Good,
+                    IsSafetyInputLost(snapshot, config, nowUtc),
                     "PLC 통신 상실 — 안전 입력 판정 불가", config, nowUtc, trips);
 
                 if (systemStop)
@@ -323,6 +329,56 @@ namespace Esam.Domain.Alarms
 
                 return new InterlockEvaluation(trips, commands, il01SystemWide, unjudgeable);
             }
+        }
+
+        /// <summary>
+        /// 안전 입력을 신뢰할 수 없는 상태인지 판정한다(IL-04).
+        /// </summary>
+        /// <param name="snapshot">현재 스냅샷.</param>
+        /// <param name="config">제어 설정.</param>
+        /// <param name="nowUtc">현재 시각(UTC).</param>
+        /// <returns>신뢰할 수 없으면 true.</returns>
+        /// <remarks>
+        /// <para><b>"아직 안 왔다" 와 "오다가 끊겼다" 를 구분한다.</b> 종전에는 둘을
+        /// 같게 보아, 기동 직후 PLC 가 첫 응답을 보내기 전에 다른 포트의 사이클이
+        /// 끝나면 그 순간 안전 입력 상실로 판정했다(D23).</para>
+        /// <para>한 번이라도 정상 수신한 뒤에는 유예가 없다. 그 뒤의 품질 저하는
+        /// 기동 지연이 아니라 통신 상실이고, 그때는 즉시 멈춰야 한다.</para>
+        /// <para>유예가 지나도록 한 번도 수신하지 못하면 발동한다.
+        /// <b>기다리되 무한정 기다리지 않는다.</b></para>
+        /// </remarks>
+        private bool IsSafetyInputLost(
+            SystemSnapshot snapshot, ControlConfig config, DateTime nowUtc)
+        {
+            if (!config.SafetyInputsConfigured)
+            {
+                // 구성에 안전 입력이 없다. 이 사실 자체는 조립 경고가 보고한다.
+                return false;
+            }
+
+            if (_firstEvaluationUtc == DateTime.MinValue)
+            {
+                _firstEvaluationUtc = nowUtc;
+            }
+
+            if (snapshot.Plc.Quality == Quality.Good)
+            {
+                _safetyInputSeen = true;
+                return false;
+            }
+
+            // 한 번이라도 받아 본 뒤의 저하는 유예 없이 즉시 발동한다.
+            if (_safetyInputSeen || snapshot.Plc.Quality != Quality.NoData)
+            {
+                return true;
+            }
+
+            if (config.SafetyInputGraceMs <= 0)
+            {
+                return true;
+            }
+
+            return (nowUtc - _firstEvaluationUtc).TotalMilliseconds > config.SafetyInputGraceMs;
         }
 
         /// <summary>

@@ -146,6 +146,33 @@ namespace Esam.Communication.Polling
             _commands.EnqueueRange(commands);
         }
 
+        /// <summary>
+        /// 영점 오프셋을 갱신한다. Maintenance 화면의 영점 교정에서 호출한다.
+        /// </summary>
+        /// <param name="deviceId">디바이스 ID.</param>
+        /// <param name="offset">새 오프셋.</param>
+        /// <returns>이 포트가 그 디바이스를 갖고 있으면 true.</returns>
+        /// <remarks>
+        /// <para>이 포트에 없는 디바이스면 아무 일도 하지 않고 false 를 준다.
+        /// 조립 루트가 모든 포트에 물어보고, 아무도 갖고 있지 않으면 그것이
+        /// <b>구성이 어긋났다는 신호</b>다. 조용히 성공으로 처리하면
+        /// 영점을 잡았는데 값이 그대로인 상태가 된다.</para>
+        /// <para>필터는 <see cref="DeviceRuntime.SetZeroOffset"/> 이 비운다.
+        /// 과거 값이 새 기준과 섞이면 교정 직후 몇 초 동안 값이 어긋난다.</para>
+        /// </remarks>
+        public bool TrySetZeroOffset(string deviceId, double offset)
+        {
+            DeviceRuntime device;
+
+            if (string.IsNullOrEmpty(deviceId) || !_deviceIndex.TryGetValue(deviceId, out device))
+            {
+                return false;
+            }
+
+            device.SetZeroOffset(offset);
+            return true;
+        }
+
         /// <summary>자동 제어 지령만 비운다.</summary>
         public void ClearAutomaticCommands()
         {

@@ -71,6 +71,25 @@ namespace Esam.Domain.Configuration
         /// </remarks>
         public bool SafetyInputsConfigured { get; set; }
 
+        /// <summary>
+        /// 안전 입력의 <b>첫 수신</b>을 기다리는 시간 [ms]. 0 이면 기다리지 않는다.
+        /// </summary>
+        /// <remarks>
+        /// <para><b>왜 필요한가(D23).</b> 포트마다 폴링 주기가 다르다. CH2(밸브·팬 10 tx,
+        /// 113 ms)가 CH1(차압 13 + PLC DI, 218 ms)보다 먼저 끝나므로,
+        /// <b>CH2 의 첫 사이클이 끝난 시점에 PLC 는 아직 한 번도 응답하지 않은 상태</b>다.
+        /// 그 순간 IL-04 가 "안전 입력 상실" 로 판정해 SafeStop 을 올리고,
+        /// 곧 PLC 가 응답해 해제되면 단계는 Fault 로 내려앉는다.
+        /// 기동할 때마다 반복되며, 사람이 손댈 수 있는 것은 아무것도 없다.</para>
+        /// <para><b>왜 "NoData 는 봐준다" 로 두지 않는가.</b> PLC 가 영영 응답하지 않는
+        /// 구성에서 IL-04 가 절대 발동하지 않게 된다. 안전 입력이 없는 채로
+        /// 운전에 들어가는 것이 오탐보다 훨씬 나쁘다.</para>
+        /// <para>그래서 <b>기다리되 무한정 기다리지 않는다.</b> 이 시간이 지나도록
+        /// 한 번도 수신하지 못하면 발동한다. 한 번이라도 수신한 뒤의 품질 저하는
+        /// 유예 없이 즉시 발동한다 — 그것은 기동 지연이 아니라 통신 상실이다.</para>
+        /// </remarks>
+        public int SafetyInputGraceMs { get; set; }
+
         /// <summary>ESAM 문서 기준 기본값으로 초기화한다.</summary>
         public ControlConfig()
         {
@@ -80,6 +99,10 @@ namespace Esam.Domain.Configuration
             Sensor1Reference = "S1-1";
             FilterWindowSize = 5;
             LogFilteredAndRaw = true;
+
+            // 폴링 실효 주기 218 ms 의 20배가 넘는다. 첫 수신이 이 안에 오지 않으면
+            // 지연이 아니라 배선이나 구성 문제로 보는 것이 맞다.
+            SafetyInputGraceMs = 5000;
 
             // ESAM 운용방법 설명자료 p.6 Config 화면의 기본값
             Modes = new Dictionary<SensorMode, ModeSetting>

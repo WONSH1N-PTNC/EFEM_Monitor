@@ -299,6 +299,304 @@ namespace Esam.Services
         }
 
         /// <summary>
+        /// 영점 오프셋을 런타임에 반영한다.
+        /// </summary>
+        /// <param name="offsets">디바이스 ID → 새 오프셋.</param>
+        /// <param name="unknown">어느 포트도 갖고 있지 않은 디바이스 ID(출력).</param>
+        /// <returns>반영된 디바이스 수.</returns>
+        /// <remarks>
+        /// <para>포트가 여럿이므로 전부에 물어본다. 아무도 갖고 있지 않은 ID 는
+        /// 따로 돌려준다 — 조용히 넘어가면 <b>영점을 잡았는데 값이 그대로인</b>
+        /// 상태가 되고, 그 원인을 화면에서 찾을 수 없다.</para>
+        /// <para>파일 저장은 하지 않는다. 여기는 런타임 반영까지고,
+        /// <c>device-map.json</c> 기록은 화면이 <c>DeviceMapDocumentEditor</c> 로 한다.
+        /// 검증을 거치지 않은 값이 파일에 남는 경로를 만들지 않기 위해서다.</para>
+        /// </remarks>
+        public int ApplyZeroOffsets(IDictionary<string, double> offsets, out IList<string> unknown)
+        {
+            unknown = new List<string>();
+
+            if (offsets == null || offsets.Count == 0)
+            {
+                return 0;
+            }
+
+            int applied = 0;
+
+            foreach (KeyValuePair<string, double> pair in offsets)
+            {
+                bool found = false;
+
+                foreach (ModbusPortWorker worker in _workers)
+                {
+                    if (worker.TrySetZeroOffset(pair.Key, pair.Value))
+                    {
+                        found = true;
+                    }
+                }
+
+                if (found)
+                {
+                    applied++;
+                }
+                else
+                {
+                    unknown.Add(pair.Key);
+                }
+            }
+
+            return applied;
+        }
+
+        /// <summary>
+        /// 수동 조작을 막는 사유. 조작해도 되면 null.
+        /// </summary>
+        /// <returns>거부 사유. 없으면 null.</returns>
+        /// <remarks>
+        /// <para><b>버튼을 회색으로만 두지 않는다.</b> 이유 없이 눌리지 않는 버튼은
+        /// 프로그램이 멈춘 것처럼 보이고, 현장에서는 그때부터 화면을 믿지 않는다.</para>
+        /// <para>순서가 있다. 안전 조건을 먼저 본다 — 인터록이 걸린 상태에서
+        /// "자동 운전을 정지하십시오" 라고 안내하면 사람이 엉뚱한 것을 손댄다.</para>
+        /// </remarks>
+        public string DescribeManualDenial()
+        {
+            if (Interlock != null && Interlock.IsTripped)
+            {
+                return "인터록이 발동 중입니다. 해제되기 전에는 액추에이터를 움직일 수 없습니다.";
+            }
+
+            SystemPhase phase = Engine.StateMachine.Phase;
+
+            if (phase == SystemPhase.SafeStop)
+            {
+                return "비상정지 상태입니다. 물리 조건을 해제한 뒤에 조작할 수 있습니다.";
+            }
+
+            if (phase == SystemPhase.Fault)
+            {
+                return "장애 상태입니다. 먼저 장애를 해제하십시오.";
+            }
+
+            if (phase == SystemPhase.AutoControl)
+            {
+                return "자동 운전 중입니다. 먼저 정지하십시오.";
+            }
+
+            if (phase != SystemPhase.Ready)
+            {
+                return string.Format(
+                    CultureInfo.InvariantCulture,
+                    "지금 단계({0})에서는 조작할 수 없습니다. 밸브 원점 복귀가 끝나야 합니다.",
+                    phase);
+            }
+
+            return null;
+        }
+
+        /// <summary>밸브를 지정한 개도율로 보낸다.</summary>
+        /// <param name="valveId">밸브 ID.</param>
+        /// <param name="percent">개도율 [%]. 0~100.</param>
+        /// <param name="reason">거부 사유(출력). 성공 시 null.</param>
+        /// <returns>보냈으면 true.</returns>
+        /// <remarks>
+        /// 개도율을 펄스로 바꾸는 기준은 <see cref="ControlConfig.Valve"/> 의
+        /// <c>MaxPulse</c> 다. 화면이 자체 상수로 환산하면 설정을 고쳤을 때
+        /// 화면만 옛 기준으로 남는다.
+        /// </remarks>
+        public bool TryCommandValvePercent(string valveId, double percent, out string reason)
+        {
+            reason = DescribeManualDenial();
+
+            if (reason != null)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(valveId))
+            {
+                reason = "밸브를 지정하지 않았습니다.";
+                return false;
+            }
+
+            if (percent < 0.0 || percent > 100.0)
+            {
+                reason = "개도율은 0~100 % 범위여야 합니다.";
+                return false;
+            }
+
+            int maxPulse = Control.Valve == null || Control.Valve.MaxPulse <= 0
+                ? 5000
+                : Control.Valve.MaxPulse;
+
+            int target = (int)Math.Round(
+                maxPulse * percent / 100.0, MidpointRounding.AwayFromZero);
+
+            List<ActuatorCommand> commands = new List<ActuatorCommand>();
+
+            commands.Add(ActuatorCommand.SetValvePosition(
+                valveId, target, CommandPriority.Manual, "수동 조작"));
+
+            return Engine.TryDispatchManual(commands, out reason);
+        }
+
+        /// <summary>송풍팬을 지정한 회전수로 보낸다.</summary>
+        /// <param name="fanId">팬 ID.</param>
+        /// <param name="rpm">목표 회전수 [RPM].</param>
+        /// <param name="reason">거부 사유(출력). 성공 시 null.</param>
+        /// <returns>보냈으면 true.</returns>
+        /// <remarks>
+        /// 최소 회전수 미만은 <b>정지 명령으로 바꾼다.</b> 드라이버가 받지 못하는
+        /// 값을 그대로 보내면 지령이 조용히 무시되고, 화면에는 보낸 것으로 남는다.
+        /// </remarks>
+        public bool TryCommandFanRpm(string fanId, double rpm, out string reason)
+        {
+            reason = DescribeManualDenial();
+
+            if (reason != null)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(fanId))
+            {
+                reason = "팬을 지정하지 않았습니다.";
+                return false;
+            }
+
+            double maxRpm = Control.Fan == null ? 0.0 : Control.Fan.MaxRpm;
+
+            if (rpm < 0.0 || (maxRpm > 0.0 && rpm > maxRpm))
+            {
+                reason = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "회전수는 0 ~ {0:F0} RPM 범위여야 합니다.", maxRpm);
+
+                return false;
+            }
+
+            double offBelow = Control.Fan == null ? 0.0 : Control.Fan.OffBelowRpm;
+
+            List<ActuatorCommand> commands = new List<ActuatorCommand>();
+
+            if (rpm < offBelow)
+            {
+                commands.Add(ActuatorCommand.StopFan(fanId, CommandPriority.Manual, "수동 정지"));
+            }
+            else
+            {
+                commands.Add(ActuatorCommand.SetFanRpm(fanId, rpm, CommandPriority.Manual, "수동 조작"));
+            }
+
+            return Engine.TryDispatchManual(commands, out reason);
+        }
+
+        /// <summary>밸브 원점 복귀를 개별 실행한다.</summary>
+        /// <param name="valveId">밸브 ID.</param>
+        /// <param name="reason">거부 사유(출력). 성공 시 null.</param>
+        /// <returns>보냈으면 true.</returns>
+        public bool TryHomeValve(string valveId, out string reason)
+        {
+            reason = DescribeManualDenial();
+
+            if (reason != null)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(valveId))
+            {
+                reason = "밸브를 지정하지 않았습니다.";
+                return false;
+            }
+
+            List<ActuatorCommand> commands = new List<ActuatorCommand>();
+            commands.Add(ActuatorCommand.HomeValve(valveId, "수동 원점 복귀"));
+
+            return Engine.TryDispatchManual(commands, out reason);
+        }
+
+        /// <summary>
+        /// 수동으로 움직인 액추에이터를 안전 위치로 되돌린다.
+        /// </summary>
+        /// <param name="reason">사유. 지령에 함께 실린다.</param>
+        /// <returns>보낸 지령 수.</returns>
+        /// <remarks>
+        /// <para><b>수동 조작 화면을 떠날 때 호출한다.</b> 밸브를 60 % 로 열어 두고
+        /// 다른 화면으로 넘어가면 그 상태가 그대로 남는데, 다른 화면에는
+        /// "수동으로 열려 있다" 는 표시가 없다.</para>
+        /// <para>인터록 파킹(<see cref="ControlEngine.ParkActuators"/>)과 다르다.
+        /// 그쪽은 인터록 우선순위로 보내 어떤 지령도 이기지만, 이쪽은 수동
+        /// 우선순위다. 안전 사건이 아니라 <b>사람이 하던 일을 정리하는 것</b>이므로
+        /// 인터록인 척하지 않는다.</para>
+        /// </remarks>
+        public int ParkManual(string reason)
+        {
+            List<ActuatorCommand> commands = new List<ActuatorCommand>();
+
+            if (Control.Chains == null)
+            {
+                return 0;
+            }
+
+            foreach (ChainDefinition chain in Control.Chains)
+            {
+                if (chain == null)
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(chain.ValveId))
+                {
+                    commands.Add(ActuatorCommand.CloseValve(
+                        chain.ValveId, CommandPriority.Manual, reason));
+                }
+
+                if (!string.IsNullOrEmpty(chain.FanId))
+                {
+                    commands.Add(ActuatorCommand.StopFan(
+                        chain.FanId, CommandPriority.Manual, reason));
+                }
+            }
+
+            string denial;
+
+            return Engine.TryDispatchManual(commands, out denial) ? commands.Count : 0;
+        }
+
+        /// <summary>
+        /// 장애 단계에서 기동 시퀀스를 다시 시작한다.
+        /// </summary>
+        /// <returns>재시작을 받아들였으면 true.</returns>
+        /// <remarks>
+        /// <para><b>이 경로가 없었다(D23).</b> 상태머신은 <c>Fault → ResetRequested → Init</c>
+        /// 전이를 정의해 두었는데, <c>ResetRequested</c> 를 발생시키는 코드가
+        /// 프로덕션에 하나도 없었다. 한 번 Fault 에 들어가면 프로그램을 다시 띄우는
+        /// 것 말고는 복구 수단이 없었다.</para>
+        /// <para>배너의 "장애 해제"(<see cref="ResetRuntimeFault"/>)는 SafeStop 을
+        /// <b>Fault 로 내려보내는</b> 명령이다. 도착지에서 나올 방법이 따로 필요하다.</para>
+        /// <para>Reset 은 Ready 로 바로 가지 않는다. <b>Init 부터 다시 시작해
+        /// 원점 복귀를 거친다.</b> 장애 뒤에는 밸브의 기계적 원점을 신뢰할 수 없다.</para>
+        /// <para>SafeStop 상태에서는 받아들이지 않는다. 물리 조건이 남아 있을 수 있고,
+        /// 그 해제는 <see cref="ResetRuntimeFault"/> 의 몫이다.</para>
+        /// </remarks>
+        public bool RequestRestart()
+        {
+            SystemPhase phase = Engine.StateMachine.Phase;
+
+            if (phase != SystemPhase.Fault)
+            {
+                return false;
+            }
+
+            // 재시작 전에 액추에이터를 안전 위치로 보낸다. 장애 단계에서 밸브가
+            // 어디에 서 있는지 알 수 없고, 그 상태로 원점 복귀를 시작하면
+            // 예상치 못한 방향으로 움직인다.
+            Engine.ParkActuators("장애 복구: 기동 시퀀스 재시작");
+
+            return Engine.StateMachine.Fire(SystemTrigger.ResetRequested);
+        }
+
+        /// <summary>
         /// 안전 경로 장애로 올린 SafeStop 을 해제한다. 작업자가 원인을 확인한 뒤 호출한다.
         /// </summary>
         /// <returns>해제할 장애가 있었으면 true.</returns>

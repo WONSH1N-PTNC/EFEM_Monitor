@@ -127,6 +127,10 @@ namespace Esam.Tests
             Assert.Equal(defaults.Sensor1Reference, fromFile.Sensor1Reference);
             Assert.Equal(defaults.FilterWindowSize, fromFile.FilterWindowSize);
 
+            // ★ C5 때 이 대조에서 빠져 있던 종류의 값이다.
+            // 파일이 코드 기본값과 달라지면 그 순간부터 안전 판정이 다르게 움직인다.
+            Assert.Equal(defaults.SafetyInputGraceMs, fromFile.SafetyInputGraceMs);
+
             Assert.Equal(defaults.Valve.StepPulse, fromFile.Valve.StepPulse);
             Assert.Equal(defaults.Valve.MaxPulse, fromFile.Valve.MaxPulse);
             Assert.Equal(defaults.Valve.DwellMs, fromFile.Valve.DwellMs);
@@ -153,6 +157,20 @@ namespace Esam.Tests
         // ─────────────────────────────────────────────────────────────────────
         // 거부해야 하는 경우
         // ─────────────────────────────────────────────────────────────────────
+
+        [Fact]
+        public void 안전입력_구성_여부는_파일에서_읽지_않는다()
+        {
+            // device-map 에 PLC 가 있는지로 조립 루트가 판정한다.
+            // 파일에 두면 읽히지 않는 값이 남아, 고쳐도 아무 일이 없다.
+            string json = File.ReadAllText(ControlPath);
+
+            JsonTextObject root;
+            string error;
+
+            Assert.True(JsonTextScanner.TryScan(json, out root, out error), error);
+            Assert.Null(root.Value("safetyInputsConfigured"));
+        }
 
         [Fact]
         public void 통로가_없으면_거부한다()

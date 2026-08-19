@@ -225,21 +225,91 @@ namespace Esam.Tests
 
         [Theory]
         [InlineData(Quality.Bad)]
-        [InlineData(Quality.NoData)]
         [InlineData(Quality.Stale)]
         [InlineData(Quality.Uncertain)]
         public void IL04_PLC_품질이_Good이_아니면_안전입력을_믿을_수_없으므로_전체_정지한다(Quality quality)
         {
             // ★ 회귀 방지. 예전에는 Bad 만 검사했다.
-            // 한 번도 응답하지 않은 PLC 는 영구히 NoData 로 남으므로,
             // Bad 만 보면 EmoActive·MainBreakerOff 가 계속 false 로 읽히고
             // IL-02·IL-03·IL-05 는 물론 이 규칙 자신까지 전부 무력화된다.
+            //
+            // NoData 는 별도로 다룬다(아래). 응답이 오기는 왔는데 품질이 나쁜 것과
+            // 아직 한 번도 오지 않은 것은 다른 사건이다.
             SystemSnapshot snapshot = Build.Snapshot(plc: Build.Plc(quality: quality));
 
             InterlockEvaluation result = CreateDefault().Evaluate(snapshot, Build.Config(), Build.T0);
 
             Assert.True(result.RequiresSystemStop);
             Assert.Contains(result.Trips, t => t.RuleId == "IL-04");
+        }
+
+        [Fact]
+        public void IL04_기동_직후_첫_수신_전에는_발동하지_않는다()
+        {
+            // ★ D23 회귀 방지.
+            //
+            // 포트마다 폴링 주기가 다르다. CH2(밸브·팬 10 tx, 113 ms)가
+            // CH1(차압 13 + PLC DI, 218 ms)보다 먼저 끝나므로, CH2 의 첫 사이클이
+            // 끝난 시점에 PLC 는 아직 한 번도 응답하지 않았다.
+            //
+            // 그 순간 발동하면 SafeStop 이 올라가고, 곧 PLC 가 응답해 해제되면
+            // 단계는 Fault 로 내려앉는다. 기동할 때마다 반복되며 복구할 수단이 없었다.
+            SystemSnapshot snapshot = Build.Snapshot(plc: Build.Plc(quality: Quality.NoData));
+
+            InterlockEvaluation result = CreateDefault().Evaluate(snapshot, Build.Config(), Build.T0);
+
+            Assert.False(result.RequiresSystemStop);
+            Assert.DoesNotContain(result.Trips, t => t.RuleId == "IL-04");
+        }
+
+        [Fact]
+        public void IL04_유예가_지나도록_수신하지_못하면_발동한다()
+        {
+            // 기다리되 무한정 기다리지 않는다. PLC 가 영영 응답하지 않는 구성에서
+            // 발동하지 않으면, 안전 입력 없이 운전에 들어간다.
+            InterlockEvaluator evaluator = CreateDefault();
+            ControlConfig config = Build.Config();
+            SystemSnapshot snapshot = Build.Snapshot(plc: Build.Plc(quality: Quality.NoData));
+
+            // 첫 판정으로 기준 시각을 세운다.
+            evaluator.Evaluate(snapshot, config, Build.T0);
+
+            InterlockEvaluation result = evaluator.Evaluate(
+                snapshot, config, Build.T0.AddMilliseconds(config.SafetyInputGraceMs + 1));
+
+            Assert.True(result.RequiresSystemStop);
+            Assert.Contains(result.Trips, t => t.RuleId == "IL-04");
+        }
+
+        [Fact]
+        public void IL04_한_번_수신한_뒤의_상실은_유예_없이_발동한다()
+        {
+            // 기동 지연이 아니라 통신 상실이다. 그때는 즉시 멈춰야 한다.
+            InterlockEvaluator evaluator = CreateDefault();
+            ControlConfig config = Build.Config();
+
+            evaluator.Evaluate(
+                Build.Snapshot(plc: Build.Plc(quality: Quality.Good)), config, Build.T0);
+
+            InterlockEvaluation result = evaluator.Evaluate(
+                Build.Snapshot(plc: Build.Plc(quality: Quality.NoData)),
+                config,
+                Build.T0.AddMilliseconds(1.0));
+
+            Assert.True(result.RequiresSystemStop);
+            Assert.Contains(result.Trips, t => t.RuleId == "IL-04");
+        }
+
+        [Fact]
+        public void IL04_유예를_0으로_두면_기다리지_않는다()
+        {
+            ControlConfig config = Build.Config();
+            config.SafetyInputGraceMs = 0;
+
+            InterlockEvaluation result = CreateDefault().Evaluate(
+                Build.Snapshot(plc: Build.Plc(quality: Quality.NoData)), config, Build.T0);
+
+            Assert.True(result.RequiresSystemStop);
         }
 
         [Fact]

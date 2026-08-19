@@ -409,6 +409,54 @@ namespace Esam.Services
         }
 
         /// <summary>
+        /// 사용자의 수동 지령을 보낸다.
+        /// </summary>
+        /// <param name="commands">보낼 지령.</param>
+        /// <param name="reason">거부 사유(출력). 성공 시 null.</param>
+        /// <returns>보냈으면 true.</returns>
+        /// <remarks>
+        /// <para><b>자동 운전 중에는 보내지 않는다.</b> 제어 루프가 다음 주기에
+        /// 같은 액추에이터에 다른 값을 쓰므로, 사람이 넣은 값은 눈 깜짝할 사이
+        /// 사라진다. 그 상태가 가장 나쁘다 — 조작이 먹은 것처럼 보이다가
+        /// 원인 없이 되돌아간다.</para>
+        /// <para><b>원점 복귀 전에도 보내지 않는다.</b> 밸브 위치를 신뢰할 수 없는
+        /// 상태에서 개도율을 지정하는 것은 의미가 없다.</para>
+        /// <para>인터록 판정은 여기서 하지 않는다. 제어 엔진은 인터록을 모른다
+        /// (그 관심사는 조립 루트가 갖는다). <see cref="EsamRuntime"/> 가 먼저 막는다.</para>
+        /// </remarks>
+        public bool TryDispatchManual(IList<ActuatorCommand> commands, out string reason)
+        {
+            reason = null;
+
+            if (commands == null || commands.Count == 0)
+            {
+                reason = "보낼 지령이 없습니다.";
+                return false;
+            }
+
+            SystemPhase phase = _stateMachine.Phase;
+
+            if (phase == SystemPhase.AutoControl)
+            {
+                reason = "자동 운전 중에는 수동 조작을 할 수 없습니다. 먼저 정지하십시오.";
+                return false;
+            }
+
+            if (phase != SystemPhase.Ready)
+            {
+                reason = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "지금 단계({0})에서는 수동 조작을 할 수 없습니다. 밸브 원점 복귀가 끝나야 합니다.",
+                    phase);
+
+                return false;
+            }
+
+            Dispatch(new List<ActuatorCommand>(commands));
+            return true;
+        }
+
+        /// <summary>
         /// 초기화 단계를 진행한다. 모든 밸브를 읽을 수 있게 되면 원점 복귀로 넘어간다.
         /// </summary>
         /// <remarks>

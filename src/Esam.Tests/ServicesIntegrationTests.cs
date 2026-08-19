@@ -2535,9 +2535,17 @@ namespace Esam.Tests
 
             Assert.Equal(Quality.NoData, runtime.Store.Current.Plc.Quality);
 
-            // PLC 가 구성에 있으므로 안전 입력이 있다고 판단하고, 응답이 없으면 IL-04 가 발동한다.
-            // EMO 를 읽을 수 없는 상태로 운전하는 것이 더 위험하기 때문이다.
+            // PLC 가 구성에 있으므로 안전 입력이 있다고 판단한다.
             Assert.True(runtime.Control.SafetyInputsConfigured);
+
+            // 다만 첫 수신 전에는 기동 유예가 있다(D23). 기동 직후에는 발동하지 않는다.
+            Assert.False(runtime.Interlock.IsTripped);
+
+            // 유예가 지나도록 응답이 없으면 발동한다. 기다리되 무한정 기다리지 않는다.
+            // EMO 를 읽을 수 없는 상태로 운전하는 것이 더 위험하기 때문이다.
+            _clock.AdvanceMs(runtime.Control.SafetyInputGraceMs + 1);
+            PollAll(runtime);
+
             Assert.True(runtime.Interlock.IsTripped);
             Assert.Contains(runtime.Interlock.LastEvaluation.Trips, t => t.RuleId == "IL-04");
         }

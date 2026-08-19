@@ -48,8 +48,8 @@ namespace Esam.Communication.Configuration
         /// <summary>원본과 필터값을 함께 기록할지 여부.</summary>
         public bool LogFilteredAndRaw { get; set; }
 
-        /// <summary>안전 입력이 배선되어 있는지 여부.</summary>
-        public bool SafetyInputsConfigured { get; set; }
+        /// <summary>안전 입력의 첫 수신을 기다리는 시간 [ms].</summary>
+        public int SafetyInputGraceMs { get; set; }
 
         /// <summary>모드별 공통값.</summary>
         public IList<ModeSettingDocument> Modes { get; set; }
@@ -213,7 +213,9 @@ namespace Esam.Communication.Configuration
             config.Sensor1Reference = document.Sensor1Reference;
             config.FilterWindowSize = document.FilterWindowSize;
             config.LogFilteredAndRaw = document.LogFilteredAndRaw;
-            config.SafetyInputsConfigured = document.SafetyInputsConfigured;
+            // SafetyInputsConfigured 는 파일에서 읽지 않는다. device-map 에 PLC 가
+            // 있는지로 조립 루트가 판정한다. 파일에 두면 읽히지 않는 값이 남는다.
+            config.SafetyInputGraceMs = document.SafetyInputGraceMs;
 
             if (document.Valve != null)
             {

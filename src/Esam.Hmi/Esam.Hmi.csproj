@@ -120,6 +120,10 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>
+    <Page Include="Views\MaintenanceView.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
     <Page Include="Views\AlarmEditorView.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
@@ -167,6 +171,9 @@
       <DependentUpon>RecipeEditorView.xaml</DependentUpon>
       <SubType>Code</SubType>
     </Compile>
+    <Compile Include="Views\MaintenanceView.xaml.cs">
+      <DependentUpon>MaintenanceView.xaml</DependentUpon>
+    </Compile>
     <Compile Include="Views\AlarmEditorView.xaml.cs">
       <DependentUpon>AlarmEditorView.xaml</DependentUpon>
     </Compile>
@@ -190,6 +197,8 @@
     <Compile Include="ViewModels\RecipeEditorViewModel.cs" />
     <Compile Include="ViewModels\ShellViewModel.cs" />
     <Compile Include="ViewModels\SettingsViewModel.cs" />
+    <Compile Include="ViewModels\MaintenanceViewModel.cs" />
+    <Compile Include="ViewModels\ZeroCalibrationRowViewModel.cs" />
     <Compile Include="ViewModels\AlarmEditorViewModel.cs" />
     <Compile Include="ViewModels\AlarmRuleRowViewModel.cs" />
     <Compile Include="ViewModels\IoStatusViewModel.cs" />

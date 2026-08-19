@@ -39,6 +39,7 @@ namespace Esam.Hmi.ViewModels
 
             AcknowledgeCommand = new RelayCommand(OnAcknowledge, CanAcknowledge);
             ResetFaultCommand = new RelayCommand(OnResetFault, CanResetFault);
+            RestartCommand = new RelayCommand(OnRestart, CanExecuteRestart);
             ToggleCommand = new RelayCommand(OnToggle);
 
             Refresh();
@@ -47,10 +48,49 @@ namespace Esam.Hmi.ViewModels
         /// <summary>구성 경고 목록.</summary>
         public ObservableCollection<ConfigWarningRowViewModel> Warnings { get; private set; }
 
+        /// <summary>수동 조작 활성 여부의 백킹 필드.</summary>
+        private bool _isManualActive;
+
         /// <summary>배너를 표시해야 하는지 여부.</summary>
         public bool IsVisible
         {
-            get { return HasStartupError || Warnings.Count > 0; }
+            get { return HasStartupError || Warnings.Count > 0 || IsManualActive || CanRestart; }
+        }
+
+        /// <summary>
+        /// 수동 조작이 살아 있는지 여부. 정비 화면이 알린다.
+        /// </summary>
+        /// <remarks>
+        /// <para>밸브를 수동으로 열어 두고 다른 화면으로 넘어가면 그 사실이
+        /// 어디에도 보이지 않는다. 화면 전환 시 자동으로 파킹하지만,
+        /// <b>파킹 지령을 보낸 것과 액추에이터가 실제로 닫힌 것은 다르다.</b>
+        /// 통신이 끊겨 있으면 지령은 큐에 남는다.</para>
+        /// <para>그래서 정비 화면 안에 있는 동안에도 배너에 남긴다.
+        /// 색을 아끼는 배너의 원칙에 맞춰 경고 색을 쓴다 — 고장은 아니지만
+        /// 자동 운전과 다른 상태라는 뜻이다.</para>
+        /// </remarks>
+        public bool IsManualActive
+        {
+            get { return _isManualActive; }
+            set
+            {
+                if (Set(ref _isManualActive, value))
+                {
+                    Raise("IsVisible");
+                    Raise("ManualNotice");
+                }
+            }
+        }
+
+        /// <summary>수동 조작 안내 문구. 없으면 null.</summary>
+        public string ManualNotice
+        {
+            get
+            {
+                return _isManualActive
+                    ? "수동 조작이 살아 있습니다. 자동 운전으로 돌아가기 전에 정리하십시오."
+                    : null;
+            }
         }
 
         /// <summary>
@@ -66,7 +106,7 @@ namespace Esam.Hmi.ViewModels
         /// </remarks>
         public bool IsExpanded
         {
-            get { return _isExpanded || HasStartupError; }
+            get { return _isExpanded || HasStartupError || CanRestart; }
         }
 
         /// <summary>접기/펼치기 토글 명령.</summary>
@@ -104,6 +144,17 @@ namespace Esam.Hmi.ViewModels
 
         /// <summary>안전 경로 장애 해제 명령.</summary>
         public ICommand ResetFaultCommand { get; private set; }
+
+        /// <summary>장애 단계에서 기동 시퀀스를 다시 시작하는 명령.</summary>
+        public ICommand RestartCommand { get; private set; }
+
+        /// <summary>재시작 버튼을 보여야 하는지 여부.</summary>
+        /// <remarks>
+        /// <b>Fault 는 사람이 손대지 않으면 영원히 유지된다(D23).</b>
+        /// 배너의 "장애 해제" 는 SafeStop 을 Fault 로 내려보내는 명령이라
+        /// 도착지에서는 사라진다. 여기서 나올 길을 따로 둔다.
+        /// </remarks>
+        public bool CanRestart { get; private set; }
 
         /// <summary>런타임 장애로 정지 중인지 여부.</summary>
         public bool HasRuntimeFault { get; private set; }
@@ -147,6 +198,13 @@ namespace Esam.Hmi.ViewModels
                               && runtime.Engine != null
                               && runtime.Engine.StateMachine.Phase == Esam.Domain.Control.SystemPhase.SafeStop;
 
+            // Fault 는 사람이 손대지 않으면 영원히 유지된다.
+            // 쓰기 잠금은 여기에 걸지 않는다 — 잠긴 상태로 Fault 에 들어가면
+            // 잠금을 풀 화면(Settings)도 조작할 수 없어 복구 자체가 막힌다.
+            CanRestart = runtime != null
+                         && runtime.Engine != null
+                         && runtime.Engine.StateMachine.Phase == Esam.Domain.Control.SystemPhase.Fault;
+
             UpdateText();
             UpdateCollapsedSummary();
 
@@ -156,6 +214,7 @@ namespace Esam.Hmi.ViewModels
             Raise("HasBlocking");
             Raise("IsAcknowledged");
             Raise("HasRuntimeFault");
+            Raise("CanRestart");
             Raise("Title");
             Raise("Detail");
             Raise("IsExpanded");
@@ -302,6 +361,32 @@ namespace Esam.Hmi.ViewModels
         private bool CanResetFault(object parameter)
         {
             return HasRuntimeFault;
+        }
+
+        /// <summary>재시작을 실행할 수 있는지 판정한다.</summary>
+        /// <param name="parameter">사용하지 않는다.</param>
+        /// <returns>가능하면 true.</returns>
+        private bool CanExecuteRestart(object parameter)
+        {
+            return CanRestart;
+        }
+
+        /// <summary>기동 시퀀스를 다시 시작한다.</summary>
+        /// <param name="parameter">사용하지 않는다.</param>
+        /// <remarks>
+        /// Ready 로 바로 가지 않는다. Init 부터 다시 시작해 원점 복귀를 거친다.
+        /// 장애 뒤에는 밸브의 기계적 원점을 신뢰할 수 없다.
+        /// </remarks>
+        private void OnRestart(object parameter)
+        {
+            EsamRuntime runtime = _host == null ? null : _host.Runtime;
+
+            if (runtime != null)
+            {
+                runtime.RequestRestart();
+            }
+
+            Refresh();
         }
 
         /// <summary>안전 경로 장애로 올린 SafeStop 을 해제한다.</summary>

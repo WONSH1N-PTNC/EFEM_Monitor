@@ -66,6 +66,13 @@
                                  Style="{StaticResource NavButtonStyle}"
                                  Margin="0,0,0,6" />
 
+                    <RadioButton Content="Maint." GroupName="ScreenGroup"
+                                 IsChecked="{Binding IsMaintenance, Mode=OneWay}"
+                                 Command="{Binding SelectScreenCommand}"
+                                 CommandParameter="Maintenance"
+                                 Style="{StaticResource NavButtonStyle}"
+                                 Margin="0,0,0,6" />
+
                     <RadioButton Content="Alarm" GroupName="ScreenGroup"
                                  IsChecked="{Binding IsConfigAlarm, Mode=OneWay}"
                                  Command="{Binding SelectScreenCommand}"
@@ -133,6 +140,21 @@
                     </Style>
                 </views:RecipeEditorView.Style>
             </views:RecipeEditorView>
+
+            <views:MaintenanceView DataContext="{Binding Maintenance}">
+                <views:MaintenanceView.Style>
+                    <Style TargetType="views:MaintenanceView">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding DataContext.IsMaintenance,
+                                             RelativeSource={RelativeSource AncestorType=Window}}"
+                                         Value="True">
+                                <Setter Property="Visibility" Value="Visible" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:MaintenanceView.Style>
+            </views:MaintenanceView>
 
             <views:AlarmEditorView DataContext="{Binding Alarms}">
                 <views:AlarmEditorView.Style>

@@ -69,6 +69,10 @@ namespace Esam.Hmi
             // 주기가 250 ms 라 부담이 크지 않다.
             _shell.IoStatus.Start();
 
+            // 정비 화면은 보이지 않을 때도 돈다. 영점 표본은 폴링 주기로 모이고,
+            // 화면을 연 뒤에야 모으기 시작하면 첫 취득이 그만큼 늦어진다.
+            _shell.Maintenance.Start();
+
             // 배너는 대시보드보다 느리게 갱신해도 된다.
             // 구성 경고는 초 단위로 바뀌는 값이 아니고, 장애 발생은 1초 안에 보이면 충분하다.
             _bannerTimer = new DispatcherTimer(DispatcherPriority.Background);
@@ -109,6 +113,12 @@ namespace Esam.Hmi
             {
                 _shell.Dashboard.Stop();
                 _shell.IoStatus.Stop();
+
+                // ★ 창을 닫을 때도 수동 조작을 정리한다. 화면 전환만 막으면
+                // 밸브를 열어 둔 채 프로그램을 끄는 경로가 남는다.
+                _shell.Maintenance.Leave();
+                _shell.Maintenance.Stop();
+
                 _shell = null;
             }
         }

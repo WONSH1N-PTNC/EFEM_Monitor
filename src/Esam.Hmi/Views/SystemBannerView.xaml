@@ -76,6 +76,28 @@
 
             <StackPanel Grid.Column="1" Margin="14,8,14,8">
 
+                <!--
+                    ── 수동 조작 표시 ──────────────────────────────────────────
+                    접기와 무관하게 항상 보인다. 확인(Acknowledge)으로 접을 수 있는
+                    구성 경고와 달리, 이것은 지금 이 순간의 운전 상태다.
+                    액추에이터가 사람이 넣은 값으로 서 있다는 사실은 접히면 안 된다.
+                -->
+                <TextBlock Text="{Binding ManualNotice}"
+                           FontSize="12" FontWeight="SemiBold"
+                           Margin="0,0,0,4"
+                           Foreground="{StaticResource StatusWarnBrush}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsManualActive}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
                 <!-- ── 접힌 한 줄 ───────────────────────────────────────────── -->
                 <Button Command="{Binding ToggleCommand}">
                     <!--
@@ -149,6 +171,29 @@
                                     Command="{Binding ResetFaultCommand}"
                                     Style="{StaticResource ConsoleButtonStyle}"
                                     MinWidth="120" Padding="12,5" Margin="0,0,6,0" />
+
+                            <!--
+                                Fault 에서만 보인다. "장애 해제" 는 SafeStop 을 Fault 로
+                                내려보내는 명령이라 도착지에서는 사라진다.
+                                여기서 나올 길이 따로 있어야 한다(D23).
+
+                                Ready 로 바로 가지 않는다. Init 부터 다시 시작해
+                                원점 복귀를 거치므로 문구에 그 사실을 적는다.
+                            -->
+                            <Button Content="기동 시퀀스 재시작"
+                                    Command="{Binding RestartCommand}"
+                                    MinWidth="130" Padding="12,5" Margin="0,0,6,0">
+                                <Button.Style>
+                                    <Style TargetType="Button" BasedOn="{StaticResource ConsoleButtonStyle}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding CanRestart}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
 
                             <Button Content="접기"
                                     Command="{Binding ToggleCommand}"
