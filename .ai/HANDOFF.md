@@ -61,6 +61,7 @@ docs/
 | **S7.5-b** ✅ | **알람 설정 화면** + 주석 보존 저장 + 발생 상태 승계 교체 |
 | **C5** ✅ | **`control.json` 신설** — 제어 파라미터의 배포 파일화 + 결함 1건(D22) |
 | **S7.5-c** ✅ | **Maintenance 화면** — 영점 교정 · 수동 조작 · 원점 복귀 |
+| **S8-a** ✅ | **`Esam.Persistence` 신설** — SQLite 스키마 · 일별 파일 롤링 · 배치 적재 · 리텐션 |
 
 **S7 세부**: a·b 난수 시뮬레이터 제거 후 `DataStore` 폴링 / c 구성 경고 배너 + `ResetRuntimeFault` /
 d 레시피 편집 / e 통신·통로 설정 / f ViewModel 테스트 36건 + 문서
@@ -159,6 +160,7 @@ d 레시피 편집 / e 통신·통로 설정 / f ViewModel 테스트 36건 + 문
 | 클래식 csproj + SDK 스타일 `ProjectReference` | 전이 `PackageReference` 가 흐르지 않는다. `RestoreProjectStyle=PackageReference` + 명시 참조 필요 |
 | `Esam.Tests` → `Esam.Hmi` 참조 | net472 WPF 는 `<UseWPF>` 불가. `PresentationCore`·`PresentationFramework`·`WindowsBase`·`System.Xaml` 명시. `System.Xml` 등 기본 어셈블리는 적으면 중복 |
 | 실제 워커 스레드를 띄우는 테스트 | `Dispose` 기본 `Stop(5000)` 이 파킹을 기다린다. 성립 불가한 조건이면 `Stop(0)` 으로 끊을 것 |
+| 외부 라이브러리 반환형을 추측 | `SQLiteParameterCollection.Add` 는 파라미터가 아니라 **삽입 위치(int)** 를 돌려준다. 다른 ADO.NET 구현과 다르다. 시그니처를 확인할 수 없으면 반환값을 쓰지 말고 객체를 직접 잡아 둘 것 (CS0029) |
 | 검증 통과 vs 빌드 통과 | 샌드박스에 .NET SDK·네트워크가 없어 **정적 검사만** 가능하다 (괄호 균형, 문서 주석 XML 파싱, 제네릭 불일치, XAML 유효성, JSON 키↔모델 대조) |
 
 ---
@@ -253,7 +255,7 @@ Alarm · Maintenance. 남은 큰 덩어리는 **S8 — SQLite 적재 + 트렌드
 
 ---
 
-## 10. 테스트 구성 (564건)
+## 10. 테스트 구성 (586건)
 
 | 파일 | 건수 | 대상 |
 |---|---|---|
@@ -271,6 +273,8 @@ Alarm · Maintenance. 남은 큰 덩어리는 **S8 — SQLite 적재 + 트렌드
 | `ControlConfigTests.cs` | 14 | **배포 `control.json`** — 값이 코드 기본값과 일치하는가(C5) |
 | `ManualControlTests.cs` | 14 | **수동 조작 관문** — 자동 운전 중·원점 복귀 전 거부, 영점 반영 |
 | `FaultRecoveryTests.cs` | 5 | **Fault 에서 나올 수 있는가**(D23) |
+| `SqliteLogStoreTests.cs` | 13 | **실제 파일로 적재** — 일별 롤링·자정 분기·WAL·메타·리텐션 |
+| `TrendRowTests.cs` | 8 | 스냅샷 → 트렌드 행 — 열 순서, 품질 나쁜 값은 기록하지 않음 |
 | `ModbusCodecTests.cs` | 25 | CRC·프레임 |
 | `InterlockEvaluatorTests.cs` | 23 | 인터록 판정 |
 | `AlarmConfigTests.cs` / `RecipeConfigTests.cs` | 20 / 22 | **배포 설정 파일 자체**를 검증 |

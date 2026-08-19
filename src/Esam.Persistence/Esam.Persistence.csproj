@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Esam.Persistence — 데이터 적재 계층.
+
+    설계 원칙(DESIGN.md 9.1):
+      * Esam.Domain 만 참조한다. Communication·Services 를 알지 못한다.
+      * 스냅샷을 받아 저장하는 것까지가 책임이다. 무엇을 언제 저장할지는 상위가 정한다.
+
+    이렇게 두면 저장 계층을 하드웨어도 런타임도 없이 단독으로 검증할 수 있다.
+  -->
+  <PropertyGroup>
+    <AssemblyName>Esam.Persistence</AssemblyName>
+    <RootNamespace>Esam.Persistence</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Esam.Domain\Esam.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      System.Data.SQLite.Core 를 쓴다. 메타패키지(System.Data.SQLite)는 EF6 와
+      LINQ 어셈블리까지 끌고 오는데, 이 프로젝트는 ADO.NET 만 쓴다.
+
+      네이티브 DLL(x86/x64)이 함께 배포된다. 클래식 csproj 인 Esam.Hmi 는
+      전이 PackageReference 자산을 받지 못하므로 같은 참조를 직접 선언해야 한다.
+      빠뜨리면 빌드는 통과하고 실행 시점에 DllNotFoundException 으로 죽는다.
+    -->
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
+
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

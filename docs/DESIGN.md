@@ -461,11 +461,17 @@ PLC 미배선인 현재 상태가 정확히 여기에 해당했습니다. `!= Qu
 
 ## 6. 데이터 로깅 설계 (SQLite + CSV)
 
-### 6.1 SQLite 스키마 (초안)
+### 6.1 SQLite 스키마 (S8-a 구현본)
+
+구현: `src/Esam.Persistence/SqliteLogStore.cs`. 하루 파일 하나에 아래 네 테이블이 들어간다.
 
 ```sql
-PRAGMA journal_mode = WAL;      -- 쓰기 중 조회 가능
+PRAGMA journal_mode = WAL;      -- 쓰는 중에도 조회가 막히지 않는다
 PRAGMA synchronous  = NORMAL;   -- 처리량/내구성 절충
+
+-- 이 파일이 무엇인지. 조회 쪽이 시간대를 추측하지 않게 한다.
+CREATE TABLE meta ([key] TEXT PRIMARY KEY, [value] TEXT NOT NULL);
+--   schema_version / local_date(yyyyMMdd) / utc_from_ms / utc_to_ms
 
 -- 시계열 (Wide 테이블: 100~200ms 주기, 조회 성능 우선)
 CREATE TABLE trend (
@@ -478,32 +484,49 @@ CREATE TABLE trend (
   ffu_rpm REAL, mfc1 REAL, mfc2 REAL,
   av1 REAL, av2 REAL, av3 REAL,
   temp_efem REAL, humi_efem REAL, particle REAL, temp_ctrlbox REAL,
-  ctrl_mode INTEGER, ctrl_phase INTEGER, alarm_bits BLOB
+  ctrl_mode INTEGER, ctrl_phase INTEGER, alarm_codes TEXT
 );
 CREATE INDEX ix_trend_ts ON trend(ts_utc);
 
 CREATE TABLE alarm_history (
   id INTEGER PRIMARY KEY, code TEXT NOT NULL, severity INTEGER,
   raised_utc INTEGER NOT NULL, cleared_utc INTEGER,
-  ack_utc INTEGER, ack_user TEXT, value REAL, message TEXT
+  ack_utc INTEGER, ack_user TEXT, [value] REAL, message TEXT
 );
+CREATE INDEX ix_alarm_raised ON alarm_history(raised_utc);
 
 CREATE TABLE audit_log (           -- 설정 변경 추적 (반도체 고객 요구 대비)
-  id INTEGER PRIMARY KEY, ts_utc INTEGER, user TEXT, category TEXT,
-  item TEXT, old_value TEXT, new_value TEXT
+  id INTEGER PRIMARY KEY, ts_utc INTEGER NOT NULL, [user] TEXT,
+  category TEXT, item TEXT, old_value TEXT, new_value TEXT
 );
-
-CREATE TABLE recipe (id INTEGER PRIMARY KEY, name TEXT UNIQUE,
-  json TEXT, updated_utc INTEGER, updated_user TEXT);
+CREATE INDEX ix_audit_ts ON audit_log(ts_utc);
 ```
+
+초안에서 바뀐 것과 그 이유:
+
+| 초안 | 구현 | 이유 |
+|---|---|---|
+| `alarm_bits BLOB` | `alarm_codes TEXT` | 알람 코드 체계가 고정이 아니다(설정 화면에서 활성 여부가 바뀐다). 비트 위치를 코드에 박으면 규칙이 알람 설정과 저장 계층 두 곳에 생긴다. |
+| `recipe` 테이블 | **삭제** | 레시피는 시계열이 아니라 현재 상태여서 일별 파일에 담으면 매일 사라진다. C5 에서 `recipe.json` 을 배포 산출물로 정했으므로 DB 사본을 두면 진실이 두 곳이 된다. |
+| — | `meta` 테이블 신설 | 파일 이름은 **현지 날짜**, 값은 UTC 다. 어느 파일이 어느 UTC 구간을 담는지 적어 두지 않으면 시간대가 다른 곳에서 열었을 때 조용히 하루가 어긋난다. |
+
+- **값이 없으면 `NULL`.** 0 으로 채우면 "측정하지 않은 것" 과 "0 Pa" 를 구분할 수 없다. 풍속 0 m/s 는 유효한 측정값이다.
+- **품질이 `Good` 이 아닌 값도 `NULL`.** 통신이 끊긴 센서의 낡은 값을 남기면 나중에 그 구간이 정상 운전으로 읽힌다.
 
 ### 6.2 적재 전략
 - **일별 DB 파일 롤링** (`log/esam_YYYYMMDD.db`) — 단일 파일 무한 증가 방지
-- `BlockingCollection<SystemSnapshot>` → 500ms 또는 100건 단위 **단일 트랜잭션 배치 insert**
-- 용량 추산: 40 컬럼 × 8B ≈ 320B/row → **200ms 주기 = 약 138 MB/일**, **100ms 주기 = 약 276 MB/일**
-  - → **압축 저장 옵션**: 변화 없는 구간 데드밴드 필터(값 변화 < ε 이면 skip) 적용 시 60~80% 절감
-  - 리텐션 기본 90일, Config로 조정
-- CSV Export: 기간 + 항목 선택 → 스트리밍 방식 (전량 메모리 로드 금지), Phase 5 응답성 분석용 원본 해상도 유지
+  - 날짜는 **현지 시각 기준**. 현장에서 "8월 19일 로그" 를 찾는 방식과 파일 이름이 같아야 한다.
+  - 행은 **자기 시각의 파일로** 간다. 배치가 자정을 걸치면 파일 두 개로 나뉜다. 배치 시작 시각으로 몰아넣으면 00:00 직후 데이터가 전날 파일에 들어간다.
+  - 파일을 닫을 때 `PRAGMA wal_checkpoint(TRUNCATE)` 로 WAL 을 본체에 합친다. 합치지 않으면 파일만 복사해 간 사람이 마지막 몇 분을 잃는다.
+- `BlockingCollection<SystemSnapshot>` → 500ms 또는 100건 단위 **단일 트랜잭션 배치 insert** (S8-a 후속)
+- 용량 추산: 37 컬럼 × 8B ≈ 300B/row → **200ms 주기 = 약 130 MB/일**, **100ms 주기 = 약 260 MB/일**
+  - → **압축 저장 옵션**: 변화 없는 구간 데드밴드 필터(값 변화 < ε 이면 skip) — **미적용, 결정 보류**.
+    필터를 걸면 "값이 변하지 않은 것" 과 "기록이 없는 것" 을 구분할 수 없게 된다. Phase 5 응답성 분석의 근거 데이터가 흐려지는 쪽이 디스크보다 비싸다고 보고 일단 원본 해상도로 둔다.
+  - 리텐션 기본 90일(오늘 포함), Config 로 조정. **파일 수정시각이 아니라 이름의 날짜로 판단한다** — WAL 체크포인트가 본체 파일을 다시 건드리므로 수정시각으로 보면 며칠 전 파일이 오늘 것처럼 보인다.
+  - 이름 규칙(`esam_YYYYMMDD.db`)에 맞지 않는 파일은 지우지 않는다. 같은 폴더에 둔 백업본을 지우는 것은 리텐션의 일이 아니다.
+- **저장 실패를 삼키지 않는다.** `SqliteLogStore` 는 예외를 그대로 올린다. 기록이 멈춘 것을 알리는 것은 상위 로거의 몫이고, 저장소가 조용히 실패하면 아무도 모르는 채 데이터가 사라진다.
+- CSV Export: 기간 + 항목 선택 → 스트리밍 방식 (전량 메모리 로드 금지), Phase 5 응답성 분석용 원본 해상도 유지 (S8-b)
+
 
 ### 6.3 Data Log Viewer (PDF p.8 "협의 필요")
 제안: 상단 기간/항목 선택 → ScottPlot 다축 트렌드 + 하단 알람 이벤트 마커 오버레이 + 그리드 뷰 토글 + CSV 반출 버튼. → **협의 필요 항목 #8**

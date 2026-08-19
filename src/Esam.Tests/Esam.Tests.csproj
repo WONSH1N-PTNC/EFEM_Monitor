@@ -20,6 +20,16 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+
+    <!--
+      ★ Esam.Persistence 를 참조하는 것만으로는 부족해서 직접 적는다.
+
+      System.Data.SQLite.Core 는 네이티브 DLL(SQLite.Interop.dll)을 출력 폴더로
+      복사하는 일을 패키지의 build 대상이 한다. build 자산은 전이되지 않으므로,
+      참조만 걸어 두면 컴파일은 되고 테스트 실행 시점에 DllNotFoundException 이 난다.
+      "빌드는 통과하는데 실행만 안 되는" 상태가 가장 늦게 발견된다.
+    -->
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
   </ItemGroup>
 
   <ItemGroup>
@@ -45,6 +55,7 @@
     <ProjectReference Include="..\Esam.Domain\Esam.Domain.csproj" />
     <ProjectReference Include="..\Esam.Communication\Esam.Communication.csproj" />
     <ProjectReference Include="..\Esam.Services\Esam.Services.csproj" />
+    <ProjectReference Include="..\Esam.Persistence\Esam.Persistence.csproj" />
 
     <!--
       ★ ViewModel 을 테스트하기 위해 HMI 를 참조한다.
