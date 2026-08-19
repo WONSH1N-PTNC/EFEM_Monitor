@@ -150,9 +150,35 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="20,0,0,0">
-                    <TextBlock Text="{Binding BrandName}"
-                               FontSize="15" FontWeight="Bold"
-                               Foreground="{StaticResource TextPrimaryBrush}" />
+                    <!--
+                        브랜드 라벨을 누르면 좌측 메뉴가 접히거나 펼쳐진다.
+
+                        상태는 셸(ShellViewModel)이 갖고 있으므로 Window 의 DataContext
+                        를 거쳐 명령을 부른다. 여기(DashboardViewModel)에 두면 화면을
+                        전환할 때 메뉴가 다시 나타난다.
+
+                        누를 수 있다는 사실이 겉모습에 드러나지 않으므로 ToolTip 으로
+                        적어 둔다. 라벨 모양은 바꾸지 않는다 — 버튼처럼 보이게 하면
+                        헤더에 조작 요소가 하나 더 있는 것으로 읽힌다.
+                    -->
+                    <Button Command="{Binding DataContext.ToggleSidebarCommand,
+                                        RelativeSource={RelativeSource AncestorType=Window}}"
+                            ToolTip="좌측 메뉴 접기/펼치기"
+                            Cursor="Hand"
+                            HorizontalAlignment="Left">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border Background="Transparent">
+                                    <ContentPresenter />
+                                </Border>
+                            </ControlTemplate>
+                        </Button.Template>
+
+                        <TextBlock Text="{Binding BrandName}"
+                                   FontSize="15" FontWeight="Bold"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                    </Button>
+
                     <TextBlock Text="{Binding BrandVersion}"
                                Style="{StaticResource MicroLabelStyle}"
                                Margin="0,2,0,0" />

@@ -200,6 +200,11 @@ Alarm · Maintenance. 남은 큰 덩어리는 **S8 — SQLite 적재 + 트렌드
 - **제어 파라미터 실시간 조정 화면** — `control.json` 이 생겼으므로 이제 가능
 - **C4 GEM 연동** — 상위 호스트 명세 확정 대기
 - **S9 권한·감사로그** — 지금의 "정비 모드 진입" 을 계정으로 교체
+- **대시보드 헤더의 죽은 버튼 5건** — `DashboardView` 헤더의 `Dashboard`·`Maintenance`·
+  `Config`·`I / O`·`Data Log` RadioButton 은 **명령이 없고** `IsChecked="True"` 가 박혀 있다.
+  실제 화면 전환은 좌측 메뉴가 한다. D20(고정값이 진실을 말하지 않는 것)과 같은 종류다.
+  좌측 메뉴를 접으면 이 줄만 남아 더 눈에 띈다.
+  → **추후 관리 포인트로 남김** (사용자 결정, 2026-08-19)
 
 
 **설정 파일 저장은 이제 세 파일 모두 주석을 보존합니다.** 공용 스캐너는
@@ -255,30 +260,41 @@ Alarm · Maintenance. 남은 큰 덩어리는 **S8 — SQLite 적재 + 트렌드
 
 ---
 
-## 10. 테스트 구성 (586건)
+## 10. 테스트 구성 (587건)
+
+**세는 규칙**: `[Fact]` 는 1건, `[Theory]` 는 `[InlineData]` 개수만큼 센다.
+종전 표는 메서드 수를 적어 두어 실제 실행 건수와 최대 23건까지 어긋나 있었다
+(`DeviceMapTests` 40 → 실제 63). 아래는 실행 결과와 대조한 값이다.
 
 | 파일 | 건수 | 대상 |
 |---|---|---|
 | `ServicesIntegrationTests.cs` | 73 | 종단 통합 — 폴링→스냅샷→제어→인터록. 시뮬레이션 전 경로 |
-| `DeviceMapTests.cs` | 40 | 설정 로더·스케일링·검증 |
+| `DeviceMapTests.cs` | 63 | 설정 로더·스케일링·검증 |
+| `HmiViewModelTests.cs` | 38 | **ViewModel 판단 — 파싱·쓰기 잠금·저장 검증 경유·메뉴 토글** |
 | `PortWorkerTests.cs` | 38 | 워커 사이클·지령 큐·재개방 |
-| `HmiViewModelTests.cs` | 36 | **ViewModel 판단 — 파싱·쓰기 잠금·저장 검증 경유** |
-| `SnapshotHealthTests.cs` | 15 | 디바이스별 통신 상태 — 무응답/노후/미구성 구분 |
-| `IoStatusViewModelTests.cs` | 15 | I/O 화면 판정 — 램프·DI 극성·압력 원시값 |
-| `PlcPointContractTests.cs` | 5 | **배포 `device-map.json` 의 PLC 키 ↔ 코드 조회 키 대조**(D19) |
-| `AlarmDocumentEditorTests.cs` | 12 | **주석 보존 저장** — 무편집 시 바이트 동일, 편집 시 한 줄만 변경 |
-| `AlarmEditorViewModelTests.cs` | 14 | 알람 화면 판단 — 파싱·압력룰 잠금·치명 확인 절차 |
-| `AlarmRuleSwapTests.cs` | 9 | **발생 상태 승계** — 저장이 Reset 을 대신하지 않을 것 |
+| `ModbusCodecTests.cs` | 31 | CRC·프레임 |
+| `InterlockEvaluatorTests.cs` | 29 | 인터록 판정 |
+| `SystemStateMachineTests.cs` | 28 | 상태 전이·금지 전이 |
+| `UnitConversionTests.cs` | 28 | 단위 변환·스케일 |
+| `RecipeConfigTests.cs` | 22 | **배포 `recipe.json` 자체**를 검증 |
+| `AlarmConfigTests.cs` | 20 | **배포 `alarms.json` 자체**를 검증 |
+| `BandControlPolicyTests.cs` | 18 | 밴드 제어 판단 |
+| `SimulatedTransportTests.cs` | 18 | 가상 전송계층 |
+| `PlantModelTests.cs` | 17 | 가상 플랜트 응답 |
+| `IoStatusViewModelTests.cs` | 16 | I/O 화면 판정 — 램프·DI 극성·압력 원시값 |
+| `AlarmEvaluatorTests.cs` | 15 | 알람 판정 |
 | `ConfigDocumentEditorTests.cs` | 15 | **device-map·recipe 주석 보존**(D21) + 공용 스캐너 |
-| `ControlConfigTests.cs` | 14 | **배포 `control.json`** — 값이 코드 기본값과 일치하는가(C5) |
+| `ControlConfigTests.cs` | 15 | **배포 `control.json`** — 값이 코드 기본값과 일치하는가(C5) |
+| `SnapshotHealthTests.cs` | 15 | 디바이스별 통신 상태 — 무응답/노후/미구성 구분 |
+| `AlarmEditorViewModelTests.cs` | 14 | 알람 화면 판단 — 파싱·압력룰 잠금·치명 확인 절차 |
 | `ManualControlTests.cs` | 14 | **수동 조작 관문** — 자동 운전 중·원점 복귀 전 거부, 영점 반영 |
+| `SqliteLogStoreTests.cs` | 13 | **실제 파일로 적재** — 일별 롤링·자정 분기·WAL·메타·리텐션(S8-a) |
+| `AlarmDocumentEditorTests.cs` | 12 | **주석 보존 저장** — 무편집 시 바이트 동일, 편집 시 한 줄만 변경 |
+| `AlarmRuleSwapTests.cs` | 9 | **발생 상태 승계** — 저장이 Reset 을 대신하지 않을 것 |
+| `ClosedLoopSimulationTests.cs` | 8 | 폐루프 수렴 |
+| `TrendRowTests.cs` | 8 | 스냅샷 → 트렌드 행 — 열 순서, 품질 나쁜 값은 기록하지 않음(S8-a) |
 | `FaultRecoveryTests.cs` | 5 | **Fault 에서 나올 수 있는가**(D23) |
-| `SqliteLogStoreTests.cs` | 13 | **실제 파일로 적재** — 일별 롤링·자정 분기·WAL·메타·리텐션 |
-| `TrendRowTests.cs` | 8 | 스냅샷 → 트렌드 행 — 열 순서, 품질 나쁜 값은 기록하지 않음 |
-| `ModbusCodecTests.cs` | 25 | CRC·프레임 |
-| `InterlockEvaluatorTests.cs` | 23 | 인터록 판정 |
-| `AlarmConfigTests.cs` / `RecipeConfigTests.cs` | 20 / 22 | **배포 설정 파일 자체**를 검증 |
-| 그 외 | 나머지 | 밴드제어·상태머신·플랜트·단위변환·폐루프 |
+| `PlcPointContractTests.cs` | 5 | **배포 `device-map.json` 의 PLC 키 ↔ 코드 조회 키 대조**(D19) |
 
 **통합 테스트가 배포 설정(`config/*.json`)을 그대로 읽습니다.**
 샘플을 따로 만들어 검증하면 배포본이 깨져도 테스트는 통과합니다.

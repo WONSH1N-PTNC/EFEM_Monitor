@@ -35,6 +35,21 @@
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="0,0,1,0">
 
+            <!--
+                대시보드 좌상단의 브랜드 라벨을 누르면 접힌다.
+                Collapsed 는 자리를 차지하지 않으므로 화면이 그만큼 넓어진다.
+            -->
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsSidebarVisible}" Value="False">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+
             <DockPanel LastChildFill="False">
 
                 <StackPanel DockPanel.Dock="Top" Margin="10,14,10,0">
@@ -102,6 +117,56 @@
                         Padding="8,7"
                         FontSize="11" />
             </DockPanel>
+        </Border>
+
+        <!--
+            ══ 접힌 상태의 복구 띠 ═════════════════════════════════════════════
+
+            ★ 이 띠가 없으면 메뉴를 되돌릴 수 없다.
+
+            접기 버튼(브랜드 라벨)은 Operate 화면에만 있다. Settings·Alarm·I/O
+            화면에서 접으면 라벨이 화면에 없어 다시 펼칠 방법이 사라지고,
+            프로그램을 재시작해야 한다. D23(Fault 갇힘)과 같은 종류의 문제다.
+
+            그래서 접은 뒤에도 14px 폭의 띠를 남긴다. 어느 화면에서 접었든
+            같은 자리에서 되돌릴 수 있다.
+        -->
+        <Border DockPanel.Dock="Left"
+                Width="14"
+                Background="{StaticResource BgPanelBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,1,0">
+
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Collapsed" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsSidebarVisible}" Value="False">
+                            <Setter Property="Visibility" Value="Visible" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+
+            <Button Command="{Binding ToggleSidebarCommand}"
+                    ToolTip="좌측 메뉴 펼치기"
+                    Cursor="Hand"
+                    Content="▸"
+                    FontSize="10"
+                    Foreground="{StaticResource TextMutedBrush}">
+                <Button.Template>
+                    <!--
+                        띠 전체가 눌려야 한다. 배경 없는 ContentPresenter 만 두면
+                        글자 크기(10px)만큼만 눌려서 조준이 어렵다.
+                    -->
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
         </Border>
 
         <!-- ══ 화면 ═══════════════════════════════════════════════════════════ -->

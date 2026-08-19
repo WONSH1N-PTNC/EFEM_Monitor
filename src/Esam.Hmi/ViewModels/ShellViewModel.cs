@@ -43,6 +43,7 @@ namespace Esam.Hmi.ViewModels
         private readonly HmiHost _host;
         private readonly ManualWriteAccessProvider _writeAccess;
         private ShellScreen _screen = ShellScreen.Operate;
+        private bool _isSidebarVisible = true;
 
         /// <summary>셸을 생성한다.</summary>
         /// <param name="host">런타임 호스트. null 이면 디자인타임으로 동작한다.</param>
@@ -71,6 +72,7 @@ namespace Esam.Hmi.ViewModels
 
             SelectScreenCommand = new RelayCommand(OnSelectScreen);
             ToggleWriteAccessCommand = new RelayCommand(OnToggleWriteAccess);
+            ToggleSidebarCommand = new RelayCommand(OnToggleSidebar);
         }
 
         /// <summary>
@@ -148,6 +150,9 @@ namespace Esam.Hmi.ViewModels
         /// <summary>쓰기 잠금 토글 명령.</summary>
         public ICommand ToggleWriteAccessCommand { get; private set; }
 
+        /// <summary>좌측 메뉴 접기/펼치기 명령.</summary>
+        public ICommand ToggleSidebarCommand { get; private set; }
+
         /// <summary>운전 화면을 보고 있는지 여부.</summary>
         public bool IsOperate
         {
@@ -184,6 +189,19 @@ namespace Esam.Hmi.ViewModels
             get { return _screen == ShellScreen.Maintenance; }
         }
 
+        /// <summary>좌측 메뉴가 보이는지 여부.</summary>
+        /// <remarks>
+        /// <para>상태를 셸이 갖는다. 대시보드에 두면 화면을 전환할 때 메뉴가 다시
+        /// 나타나거나, 접힌 사실을 다른 화면이 모른다.</para>
+        /// <para>기동 시에는 항상 펼쳐진 상태다. 접힌 상태를 저장하지 않는 이유는,
+        /// 메뉴가 없는 화면으로 프로그램이 시작되면 처음 보는 사람이 무엇을
+        /// 눌러야 하는지 알 수 없기 때문이다.</para>
+        /// </remarks>
+        public bool IsSidebarVisible
+        {
+            get { return _isSidebarVisible; }
+        }
+
         /// <summary>쓰기가 허용된 상태인지 여부.</summary>
         public bool IsWriteAllowed
         {
@@ -198,6 +216,14 @@ namespace Esam.Hmi.ViewModels
         public string WriteAccessText
         {
             get { return IsWriteAllowed ? "쓰기 잠그기" : "정비 모드 진입"; }
+        }
+
+        /// <summary>좌측 메뉴를 접거나 펼친다.</summary>
+        /// <param name="parameter">사용하지 않는다.</param>
+        private void OnToggleSidebar(object parameter)
+        {
+            _isSidebarVisible = !_isSidebarVisible;
+            Raise("IsSidebarVisible");
         }
 
         /// <summary>화면을 전환한다.</summary>

@@ -1040,6 +1040,53 @@ namespace Esam.Tests
             }
         }
 
+        /// <summary>좌측 메뉴는 기동 시 펼쳐져 있고 토글로 왕복한다.</summary>
+        /// <remarks>
+        /// 기동 상태를 단언하는 이유는, 접힌 상태로 시작하면 처음 보는 사람이
+        /// 무엇을 눌러야 화면을 옮기는지 알 수 없기 때문이다.
+        /// </remarks>
+        [Fact]
+        public void 좌측_메뉴는_펼친_상태로_시작해_토글로_왕복한다()
+        {
+            using (TempConfig config = new TempConfig())
+            using (HmiHost host = CreateHost(config))
+            {
+                ShellViewModel shell = new ShellViewModel(host);
+
+                Assert.True(shell.IsSidebarVisible);
+
+                shell.ToggleSidebarCommand.Execute(null);
+                Assert.False(shell.IsSidebarVisible);
+
+                shell.ToggleSidebarCommand.Execute(null);
+                Assert.True(shell.IsSidebarVisible);
+            }
+        }
+
+        /// <summary>메뉴를 접은 상태는 화면을 전환해도 유지된다.</summary>
+        /// <remarks>
+        /// 상태가 대시보드에 있으면 화면을 옮길 때 메뉴가 다시 나타난다.
+        /// 셸이 들고 있어야 한다는 것을 이 테스트가 고정한다.
+        /// </remarks>
+        [Fact]
+        public void 접은_메뉴는_화면_전환에도_유지된다()
+        {
+            using (TempConfig config = new TempConfig())
+            using (HmiHost host = CreateHost(config))
+            {
+                ShellViewModel shell = new ShellViewModel(host);
+
+                shell.ToggleSidebarCommand.Execute(null);
+                Assert.False(shell.IsSidebarVisible);
+
+                shell.SelectScreenCommand.Execute("ConfigSystem");
+                Assert.False(shell.IsSidebarVisible);
+
+                shell.SelectScreenCommand.Execute("Operate");
+                Assert.False(shell.IsSidebarVisible);
+            }
+        }
+
         #endregion
     }
 }

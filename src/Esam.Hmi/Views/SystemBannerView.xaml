@@ -14,11 +14,15 @@
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Padding" Value="0" />
             <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+                        <!--
+                            가로로 늘린다. 내용 폭에 맞추면 안쪽 Grid 의 * 열이
+                            글자 폭까지 줄어들어 오른쪽 정렬이 되지 않는다.
+                        -->
+                        <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center" />
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -115,14 +119,33 @@
                         </Style>
                     </Button.Style>
 
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding CollapsedSummary}"
+                    <!--
+                        펼치기를 오른쪽 끝에 둔다. 펼친 상태의 "접기" 버튼이 오른쪽 끝에
+                        있으므로, 여기가 왼쪽이면 한 번 누를 때마다 마우스가 화면 폭을 오간다.
+
+                        Grid 에 Transparent 배경을 준다. 배경이 없으면 글자가 없는 가운데
+                        자리가 히트테스트에서 빠져 줄 전체가 눌리지 않는다.
+                    -->
+                    <Grid Background="Transparent">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding CollapsedSummary}"
                                    FontSize="12"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"
                                    Foreground="{StaticResource TextSecondaryBrush}" />
-                        <TextBlock Text="  ▾  펼치기"
+
+                        <TextBlock Grid.Column="1"
+                                   Text="▾  펼치기"
+                                   Margin="12,0,0,0"
                                    FontSize="11"
+                                   VerticalAlignment="Center"
                                    Foreground="{StaticResource TextMutedBrush}" />
-                    </StackPanel>
+                    </Grid>
                 </Button>
 
                 <!-- ── 펼친 상세 ───────────────────────────────────────────── -->
