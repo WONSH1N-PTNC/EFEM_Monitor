@@ -1,0 +1,93 @@
+{
+  // ESAM 제어 설정
+  //
+  // 이 파일이 생기기 전까지 아래 값들은 전부 코드 기본값이었다(HmiHost.LoadControl).
+  // 현장에서 Step 하나를 조정하려면 재컴파일이 필요했고, 그러면 아무도 조정하지 않는다.
+  //
+  // ── 여기 있는 것 / 없는 것 ──────────────────────────────────────────────────
+  //   여기       모드별 공통값(이탈 확정 시간), 액추에이터 파라미터, 통로 구성
+  //   recipe.json  센서별 설정값·상한·하한 (ECID 마스터). 숫자 임계값은 그쪽에만 산다
+  //   device-map.json  하드웨어 사양(레지스터·스케일·영점)
+  //
+  // ── 모드별 setpoint 와 recipe.json 의 관계 ──────────────────────────────────
+  // recipe 가 있으면 센서별 값이 우선한다. 여기 값은 레시피에 없는 센서의
+  // 폴백이며, 이탈 확정 시간(timeSec)은 모드별 공통이라 여기에만 있다.
+  "schemaVersion": "1.0",
+
+  // 제어 기준 센서. 1 = EFEM 내부, 2 = 배기 전단, 3 = 배기 후단.
+  "activeMode": "Sensor2",
+
+  // 제어 방식. Band = 순서도 밴드제어, Pid = PID(미검증).
+  // 1차 릴리스 방식은 협의 항목 #4 로 남아 있다.
+  "policy": "Band",
+
+  // 제어 루프 주기 [ms]. 폴링 실효 주기(218 ms)보다 짧게 잡아도
+  // 새 값이 오지 않으므로 의미가 없다.
+  "controlPeriodMs": 200,
+
+  // 센서 1 은 EC·SL·SR 3곳에만 설치되어 통로와 1:1 대응하지 않는다.
+  // Sensor1 모드일 때 어느 센서를 기준으로 쓸지 지정한다.
+  "sensor1Reference": "S1-1",
+
+  // 이동평균 창 크기. 1 이면 필터를 적용하지 않는다.
+  // 차압계 시정수(1.0~1.5초)와 겹치므로 과하게 키우면 위상 지연만 늘어난다.
+  "filterWindowSize": 5,
+
+  // 트렌드에 원본과 필터값을 함께 남길지 여부.
+  "logFilteredAndRaw": true,
+
+  // 안전 입력(PLC DI)이 배선되어 있는지. false 면 인터록 IL-04 가
+  // "안전 입력을 신뢰할 수 없음" 으로 판정하지 않는다.
+  "safetyInputsConfigured": true,
+
+  // ── 모드별 공통값 ───────────────────────────────────────────────────────────
+  // timeSec 은 이탈이 이 시간 이상 지속되어야 확정한다는 뜻이다.
+  // 값의 출처는 ESAM 운용방법 설명자료 p.6 Config 화면이다.
+  "modes": [
+    { "mode": "Sensor1", "setpointPa":    6.0, "bandPa":   2.0, "timeSec":  60.0 },
+    { "mode": "Sensor2", "setpointPa":  -10.0, "bandPa":  30.0, "timeSec": 120.0 },
+    { "mode": "Sensor3", "setpointPa": -200.0, "bandPa": 100.0, "timeSec": 300.0 }
+  ],
+
+  // ── 스로틀밸브 ──────────────────────────────────────────────────────────────
+  // 1스텝은 전개도의 2 %(5000 펄스 기준 100 펄스)다.
+  // dwellMs 는 지령 후 다음 판정까지 기다리는 시간이다. 밸브가 목표에
+  // 도달하기 전에 다시 판정하면 같은 방향으로 계속 밀어 과도하게 움직인다.
+  "valve": {
+    "stepPulse": 100,
+    "minPulse": 0,
+    "maxPulse": 5000,
+    "dwellMs": 1000,
+    "velocityRpm": 3,
+    "positionTolerancePulse": 20,
+    "moveTimeoutMs": 10000,
+    "homingTimeoutMs": 30000
+  },
+
+  // ── 송풍팬 ──────────────────────────────────────────────────────────────────
+  // JKBLD300V2 폐루프 속도 설정(0x4006) 유효 범위가 200~4000 RPM 이다.
+  // offBelowRpm 미만은 지령할 수 없으므로 정지 명령으로 전환한다.
+  "fan": {
+    "stepRpm": 100.0,
+    "minRpm": 200.0,
+    "maxRpm": 4000.0,
+    "dwellMs": 1000,
+    "offBelowRpm": 200.0,
+    "rpmTolerance": 50.0,
+    "rampTimeoutMs": 15000
+  },
+
+  // ── 기류 순환 통로 ──────────────────────────────────────────────────────────
+  // enabled 를 false 로 두면 그 통로는 자동 제어에서 제외된다.
+  // 종전에는 이 값이 화면에서만 바뀌고 저장되지 않아 재시작하면 전부 켜졌다.
+  //
+  // sensor1Id 가 전부 S1-1 인 것은 오타가 아니다. 센서 1 은 3곳에만 있고
+  // 통로와 1:1 로 대응하지 않는다. sensor1Reference 가 기준을 정한다.
+  "chains": [
+    { "id": 1, "name": "통로 1", "sensor1Id": "S1-1", "sensor2Id": "S2-1", "sensor3Id": "S3-1", "valveId": "V-1", "fanId": "F-1" },
+    { "id": 2, "name": "통로 2", "sensor1Id": "S1-1", "sensor2Id": "S2-2", "sensor3Id": "S3-2", "valveId": "V-2", "fanId": "F-2" },
+    { "id": 3, "name": "통로 3", "sensor1Id": "S1-1", "sensor2Id": "S2-3", "sensor3Id": "S3-3", "valveId": "V-3", "fanId": "F-3" },
+    { "id": 4, "name": "통로 4", "sensor1Id": "S1-1", "sensor2Id": "S2-4", "sensor3Id": "S3-4", "valveId": "V-4", "fanId": "F-4" },
+    { "id": 5, "name": "통로 5", "sensor1Id": "S1-1", "sensor2Id": "S2-5", "sensor3Id": "S3-5", "valveId": "V-5", "fanId": "F-5" }
+  ]
+}

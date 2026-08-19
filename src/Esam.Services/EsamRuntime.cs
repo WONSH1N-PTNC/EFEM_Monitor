@@ -62,6 +62,16 @@ namespace Esam.Services
         public IEnumerable<InterlockRule> InterlockRules { get; set; }
 
         /// <summary>
+        /// 조립 전에 이미 알고 있는 구성 경고. 배너에 함께 싣는다.
+        /// </summary>
+        /// <remarks>
+        /// 설정 파일을 런타임 밖에서 읽는 경우가 있다. <c>control.json</c> 이 그렇다 —
+        /// 없으면 기본값으로 기동하되 <b>그 사실이 화면에 남아야 한다.</b>
+        /// 조용히 기본값으로 도는 것과 파일을 읽은 것은 화면에서 구분되지 않는다.
+        /// </remarks>
+        public IEnumerable<ConfigWarning> AdditionalWarnings { get; set; }
+
+        /// <summary>
         /// 운전 파라미터. null 이면 <see cref="RecipePath"/> 에서 읽는다.
         /// </summary>
         /// <remarks>테스트에서 몇 개만 넣고 검증할 때 직접 지정한다.</remarks>
@@ -436,6 +446,14 @@ namespace Esam.Services
             // 설정 로더들이 낸 경고는 일단 지역 목록에 모아 두고 한 번에 넘긴다.
             // 경고 목록 접근을 AddWarning 한 곳으로 모으기 위한 것이다.
             List<ConfigWarning> configWarnings = new List<ConfigWarning>();
+
+            if (opts.AdditionalWarnings != null)
+            {
+                foreach (ConfigWarning warning in opts.AdditionalWarnings)
+                {
+                    configWarnings.Add(warning);
+                }
+            }
 
             // ── 운전 파라미터 (ECID 마스터) ──────────────────────────────────────
             // device-map 과 대조해 검증한다. 참조가 끊어지면 그 체인이 제어되지 않는다.

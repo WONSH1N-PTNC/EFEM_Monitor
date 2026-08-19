@@ -78,12 +78,25 @@ namespace Esam.Hmi.Infrastructure
                     return false;
                 }
 
-                ControlConfig control = LoadControl();
+                IList<string> controlWarnings;
+                ControlConfig control = LoadControl(configFolder, out controlWarnings);
 
                 RuntimeOptions options = new RuntimeOptions();
                 options.Transport = transport;
                 options.AlarmRulesPath = Path.Combine(ConfigFolder, "alarms.json");
                 options.RecipePath = Path.Combine(ConfigFolder, "recipe.json");
+
+                // control.json 관련 경고를 배너에 싣는다. 기본값으로 도는 사실이
+                // 화면에 남지 않으면, 현장에서 값을 고쳤는데 반영되지 않는 원인을
+                // 찾을 단서가 없다.
+                List<ConfigWarning> extra = new List<ConfigWarning>();
+
+                foreach (string warning in controlWarnings)
+                {
+                    extra.Add(ConfigWarning.Advisory("CFG-CTL", warning, "config/control.json 을 확인하십시오."));
+                }
+
+                options.AdditionalWarnings = extra;
 
                 _runtime = EsamRuntime.Create(map.Map, control, options, null);
                 return true;
@@ -114,36 +127,72 @@ namespace Esam.Hmi.Infrastructure
         }
 
         /// <summary>제어 설정을 읽는다. 파일이 없으면 기본값을 쓴다.</summary>
+        /// <param name="configFolder">설정 폴더.</param>
+        /// <param name="warnings">읽는 중 생긴 경고(출력).</param>
         /// <returns>제어 설정.</returns>
         /// <remarks>
-        /// <c>control.json</c> 은 아직 배포 파일이 없다. 기본값으로 동작하되
-        /// 파일이 생기면 그것을 읽도록 경로만 잡아 둔다.
+        /// <para><b>파일이 없어도 기동한다.</b> 제어 파라미터는 코드 기본값이 있고,
+        /// 그 값으로도 운전은 성립한다. 여기서 실패시키면 설정 파일 하나가 없다는
+        /// 이유로 장비가 뜨지 않는다.</para>
+        /// <para>다만 <b>조용히 넘어가지는 않는다.</b> 파일이 없거나 읽지 못하면
+        /// 경고로 남겨 배너에 드러낸다. 현장에서 값을 고쳤는데 반영되지 않는
+        /// 상태가 가장 나쁘고, 그 원인이 대개 "프로그램이 다른 폴더를 보고 있다" 이다.</para>
+        /// <para>파일이 있는데 <b>내용이 틀린</b> 경우는 다르다. 그때는 기본값으로
+        /// 조용히 대체하지 않고 경고에 사유를 그대로 싣는다.</para>
         /// </remarks>
-        private ControlConfig LoadControl()
+        private ControlConfig LoadControl(string configFolder, out IList<string> warnings)
+        {
+            warnings = new List<string>();
+
+            string path = Path.Combine(configFolder ?? "config", "control.json");
+
+            if (File.Exists(path))
+            {
+                ControlLoadResult result = ControlConfigLoader.LoadFromFile(path);
+
+                foreach (string warning in result.Warnings)
+                {
+                    warnings.Add(warning);
+                }
+
+                if (result.IsSuccess)
+                {
+                    return result.Config;
+                }
+
+                warnings.Add("control.json 을 읽지 못해 기본값으로 동작합니다: "
+                             + string.Join(" / ", result.Errors));
+            }
+            else
+            {
+                warnings.Add("control.json 이 없어 기본값으로 동작합니다: " + path);
+            }
+
+            return CreateDefaultControl();
+        }
+
+        /// <summary>코드 기본값으로 제어 설정을 만든다.</summary>
+        /// <returns>제어 설정.</returns>
+        private static ControlConfig CreateDefaultControl()
         {
             ControlConfig control = new ControlConfig();
 
             // 체인 정의는 통신 구성에서 파생되지 않으므로 기본 5조로 세운다.
-            // 설정 화면의 "기류 순환 통로" 체크박스가 Enabled 를 조정한다.
-            if (control.Chains.Count == 0)
+            for (int i = 1; i <= 5; i++)
             {
-                for (int i = 1; i <= 5; i++)
-                {
-                    ChainDefinition chain = new ChainDefinition();
-                    chain.Id = i;
-                    chain.Name = "통로 " + i.ToString(CultureInfo.InvariantCulture);
-                    chain.Enabled = true;
-                    chain.ValveId = "V-" + i.ToString(CultureInfo.InvariantCulture);
-                    chain.FanId = "F-" + i.ToString(CultureInfo.InvariantCulture);
-                    chain.Sensor2Id = "S2-" + i.ToString(CultureInfo.InvariantCulture);
-                    chain.Sensor3Id = "S3-" + i.ToString(CultureInfo.InvariantCulture);
+                ChainDefinition chain = new ChainDefinition();
+                chain.Id = i;
+                chain.Name = "통로 " + i.ToString(CultureInfo.InvariantCulture);
+                chain.Enabled = true;
+                chain.ValveId = "V-" + i.ToString(CultureInfo.InvariantCulture);
+                chain.FanId = "F-" + i.ToString(CultureInfo.InvariantCulture);
+                chain.Sensor2Id = "S2-" + i.ToString(CultureInfo.InvariantCulture);
+                chain.Sensor3Id = "S3-" + i.ToString(CultureInfo.InvariantCulture);
 
-                    // 센서 1 은 EC·SL·SR 3곳에만 설치되어 통로와 1:1 대응하지 않는다.
-                    // ControlConfig.Sensor1Reference 가 어느 것을 기준으로 쓸지 정한다.
-                    chain.Sensor1Id = "S1-1";
+                // 센서 1 은 EC·SL·SR 3곳에만 설치되어 통로와 1:1 대응하지 않는다.
+                chain.Sensor1Id = "S1-1";
 
-                    control.Chains.Add(chain);
-                }
+                control.Chains.Add(chain);
             }
 
             return control;

@@ -468,8 +468,13 @@ namespace Esam.Hmi.ViewModels
                 return;
             }
 
-            // 통로 활성화는 새 런타임의 제어 설정에 반영한다.
+            // 통로 활성화는 새 런타임의 제어 설정에 반영하고 파일에도 남긴다.
+            //
+            // ★ D22. 종전에는 메모리에만 반영했다. 프로그램을 다시 띄우면 꺼 둔 통로가
+            // 전부 켜진 상태로 돌아왔고, 화면에는 그 사실이 드러나지 않았다.
+            // 정비 중 통로를 꺼 두고 퇴근하면 다음 기동에서 그대로 돈다.
             ApplyChains(_host.Runtime);
+            SaveChains(_host.Runtime);
 
             if (_afterRebuild != null)
             {
@@ -481,6 +486,65 @@ namespace Esam.Hmi.ViewModels
             StatusText = _useSimulation
                 ? "적용했습니다. 시뮬레이션으로 재기동했습니다."
                 : "적용했습니다. 실제 통신으로 재기동했습니다.";
+        }
+
+        /// <summary>통로 활성화를 <c>control.json</c> 에 남긴다.</summary>
+        /// <param name="runtime">현재 런타임.</param>
+        /// <remarks>
+        /// 파일이 없으면 조용히 넘어간다. <c>control.json</c> 은 없어도 기동하는
+        /// 선택 파일이고, 없다는 사실은 배너의 구성 경고가 이미 알리고 있다.
+        /// 여기서 새로 만들면 주석 없는 파일이 생겨 다음 사람이 근거를 잃는다.
+        /// </remarks>
+        private void SaveChains(EsamRuntime runtime)
+        {
+            if (runtime == null || runtime.Control == null)
+            {
+                return;
+            }
+
+            string path = Path.Combine(ConfigFolder, "control.json");
+
+            if (!File.Exists(path))
+            {
+                Errors.Add("control.json 이 없어 통로 활성화를 저장하지 못했습니다. "
+                           + "이번 기동에만 적용됩니다.");
+                return;
+            }
+
+            try
+            {
+                string original = File.ReadAllText(path);
+                string updated;
+                string editError;
+
+                if (!ControlDocumentEditor.TryApply(original, runtime.Control, out updated, out editError))
+                {
+                    Errors.Add(editError);
+                    return;
+                }
+
+                ControlLoadResult verified = ControlConfigLoader.LoadFromJson(updated);
+
+                if (!verified.IsSuccess)
+                {
+                    foreach (string error in verified.Errors)
+                    {
+                        Errors.Add(error);
+                    }
+
+                    return;
+                }
+
+                File.WriteAllText(path, updated);
+            }
+            catch (IOException ex)
+            {
+                Errors.Add("control.json 을 쓰지 못했습니다: " + ex.Message);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                Errors.Add("control.json 접근이 거부되었습니다: " + ex.Message);
+            }
         }
 
         /// <summary>통로 활성화 상태를 제어 설정에 반영한다.</summary>
