@@ -138,6 +138,36 @@ namespace Esam.Tests
             Assert.Equal(defaults.Fan.StepRpm, fromFile.Fan.StepRpm, 3);
             Assert.Equal(defaults.Fan.MinRpm, fromFile.Fan.MinRpm, 3);
             Assert.Equal(defaults.Fan.MaxRpm, fromFile.Fan.MaxRpm, 3);
+
+            // 기록 설정도 같은 이유로 대조한다. 파일과 코드가 갈라지면 디스크
+            // 사용량과 보존 기간이 화면에 적힌 것과 달라진다.
+            Assert.Equal(defaults.Logging.Enabled, fromFile.Logging.Enabled);
+            Assert.Equal(defaults.Logging.Folder, fromFile.Logging.Folder);
+            Assert.Equal(defaults.Logging.BatchMs, fromFile.Logging.BatchMs);
+            Assert.Equal(defaults.Logging.BatchRows, fromFile.Logging.BatchRows);
+            Assert.Equal(defaults.Logging.RetentionDays, fromFile.Logging.RetentionDays);
+            Assert.Equal(defaults.Logging.QueueCapacity, fromFile.Logging.QueueCapacity);
+        }
+
+        /// <summary>배포 파일에 logging 절이 있어야 한다.</summary>
+        /// <remarks>
+        /// 절이 없으면 로더가 경고를 올리고 코드 기본값으로 돈다. 경고가 나면
+        /// 그것은 그것으로 드러나지만, 배포본에 절이 빠진 상태를 정상으로 두지는 않는다.
+        /// </remarks>
+        [Fact]
+        public void 배포_파일에_기록_설정_절이_있다()
+        {
+            ControlLoadResult result = LoadShipped();
+
+            foreach (string warning in result.Warnings)
+            {
+                if (warning.Contains("logging"))
+                {
+                    Assert.Fail("배포 control.json 에 logging 절이 없습니다: " + warning);
+                }
+            }
+
+            Assert.NotNull(result.Config.Logging);
         }
 
         [Fact]

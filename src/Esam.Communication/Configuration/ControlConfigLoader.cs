@@ -63,6 +63,13 @@ namespace Esam.Communication.Configuration
         /// <summary>기류 순환 통로.</summary>
         public IList<ChainDefinition> Chains { get; set; }
 
+        /// <summary>데이터 기록 설정.</summary>
+        /// <remarks>
+        /// 절이 없으면 null 이다. 그때는 코드 기본값을 쓰고 <b>경고로 알린다</b>.
+        /// 조용히 기본값으로 돌면 파일에 기록 설정을 적었다고 착각하게 된다.
+        /// </remarks>
+        public LoggingConfig Logging { get; set; }
+
         /// <summary>빈 문서를 만든다.</summary>
         public ControlConfigDocument()
         {
@@ -216,6 +223,15 @@ namespace Esam.Communication.Configuration
             // SafetyInputsConfigured 는 파일에서 읽지 않는다. device-map 에 PLC 가
             // 있는지로 조립 루트가 판정한다. 파일에 두면 읽히지 않는 값이 남는다.
             config.SafetyInputGraceMs = document.SafetyInputGraceMs;
+
+            if (document.Logging != null)
+            {
+                config.Logging = document.Logging;
+            }
+            else
+            {
+                warnings.Add("logging 절이 없습니다. 기록 설정을 코드 기본값으로 사용합니다.");
+            }
 
             if (document.Valve != null)
             {

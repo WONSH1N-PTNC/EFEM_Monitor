@@ -71,6 +71,7 @@
       런타임에만 드러난다.
     -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+	<PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
   </ItemGroup>
 
   <ItemGroup>
@@ -85,6 +86,10 @@
     <ProjectReference Include="..\Esam.Services\Esam.Services.csproj">
       <Project>{A1000000-0000-4000-8000-000000000003}</Project>
       <Name>Esam.Services</Name>
+    </ProjectReference>
+	<ProjectReference Include="..\Esam.Persistence\Esam.Persistence.csproj">
+      <Project>{A1000000-0000-4000-8000-000000000006}</Project>
+      <Name>Esam.Persistence</Name>
     </ProjectReference>
   </ItemGroup>
 

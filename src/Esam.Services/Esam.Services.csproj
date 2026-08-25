@@ -3,7 +3,7 @@
   <!--
     Esam.Services — 응용 서비스 계층.
 
-    의존 방향(DESIGN.md 9.1): Services → Domain, Services → Communication.
+    의존 방향(DESIGN.md 9.1): Services → Domain, Services → Communication, Services → Persistence.
     Hmi 는 Services 를 참조하지만 그 역방향은 없다.
     이 계층이 통신과 제어를 잇는 유일한 지점이므로, 스레드 경계도 여기서 정의된다.
   -->
@@ -22,6 +22,15 @@
   <ItemGroup>
     <ProjectReference Include="..\Esam.Domain\Esam.Domain.csproj" />
     <ProjectReference Include="..\Esam.Communication\Esam.Communication.csproj" />
+
+    <!--
+      DataLogger 가 스냅샷을 적재 계층에 넘긴다. 적재 계층은 Domain 만 알고
+      이쪽을 모르므로 순환이 생기지 않는다.
+
+      SQLite 패키지는 여기 적지 않는다. 이 프로젝트는 SQLite 형식을 직접 쓰지 않고,
+      네이티브 DLL 이 필요한 곳은 최종 실행 어셈블리(Esam.Hmi)와 테스트다.
+    -->
+    <ProjectReference Include="..\Esam.Persistence\Esam.Persistence.csproj" />
   </ItemGroup>
 
 </Project>

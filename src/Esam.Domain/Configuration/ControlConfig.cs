@@ -90,6 +90,13 @@ namespace Esam.Domain.Configuration
         /// </remarks>
         public int SafetyInputGraceMs { get; set; }
 
+        /// <summary>데이터 기록 설정. null 이 되지 않는다.</summary>
+        /// <remarks>
+        /// 기록은 제어가 아니지만 검증 경로를 하나로 두려고 여기 둔다.
+        /// 자세한 이유는 <see cref="LoggingConfig"/> 주석에 적었다.
+        /// </remarks>
+        public LoggingConfig Logging { get; set; }
+
         /// <summary>ESAM 문서 기준 기본값으로 초기화한다.</summary>
         public ControlConfig()
         {
@@ -115,6 +122,7 @@ namespace Esam.Domain.Configuration
             Valve = new ValveActuatorConfig();
             Fan = new FanActuatorConfig();
             Chains = new List<ChainDefinition>();
+            Logging = new LoggingConfig();
         }
 
         /// <summary>
@@ -272,6 +280,17 @@ namespace Esam.Domain.Configuration
             if (string.IsNullOrEmpty(Sensor1Reference))
             {
                 found.Add("Sensor1Reference 가 지정되지 않았습니다.");
+            }
+
+            if (Logging == null)
+            {
+                // 기본값으로 조용히 채우지 않는다. 설정을 만든 경로가 이 절을
+                // 빠뜨렸다는 사실 자체가 드러나야 한다.
+                found.Add("기록 설정(Logging)이 null 입니다.");
+            }
+            else
+            {
+                Logging.Validate(found);
             }
 
             errors = found;

@@ -62,6 +62,7 @@ docs/
 | **C5** ✅ | **`control.json` 신설** — 제어 파라미터의 배포 파일화 + 결함 1건(D22) |
 | **S7.5-c** ✅ | **Maintenance 화면** — 영점 교정 · 수동 조작 · 원점 복귀 |
 | **S8-a** ✅ | **`Esam.Persistence` 신설** — SQLite 스키마 · 일별 파일 롤링 · 배치 적재 · 리텐션 |
+| **S8-a 후속** ✅ | **`DataLogger`** — 스냅샷·알람을 실제 흐름에서 적재. `logging` 절 신설, HMI 배선 |
 
 **S7 세부**: a·b 난수 시뮬레이터 제거 후 `DataStore` 폴링 / c 구성 경고 배너 + `ResetRuntimeFault` /
 d 레시피 편집 / e 통신·통로 설정 / f ViewModel 테스트 36건 + 문서
@@ -160,6 +161,7 @@ d 레시피 편집 / e 통신·통로 설정 / f ViewModel 테스트 36건 + 문
 | 클래식 csproj + SDK 스타일 `ProjectReference` | 전이 `PackageReference` 가 흐르지 않는다. `RestoreProjectStyle=PackageReference` + 명시 참조 필요 |
 | `Esam.Tests` → `Esam.Hmi` 참조 | net472 WPF 는 `<UseWPF>` 불가. `PresentationCore`·`PresentationFramework`·`WindowsBase`·`System.Xaml` 명시. `System.Xml` 등 기본 어셈블리는 적으면 중복 |
 | 실제 워커 스레드를 띄우는 테스트 | `Dispose` 기본 `Stop(5000)` 이 파킹을 기다린다. 성립 불가한 조건이면 `Stop(0)` 으로 끊을 것 |
+| 예외 절 순서 | `ObjectDisposedException` 은 **`InvalidOperationException` 의 하위형**이다. 상위형을 먼저 잡으면 뒤 절이 도달 불가가 되어 컴파일되지 않는다(CS0160). `BlockingCollection` 을 다룰 때 둘 다 잡게 되므로 특히 걸린다 |
 | 외부 라이브러리 반환형을 추측 | `SQLiteParameterCollection.Add` 는 파라미터가 아니라 **삽입 위치(int)** 를 돌려준다. 다른 ADO.NET 구현과 다르다. 시그니처를 확인할 수 없으면 반환값을 쓰지 말고 객체를 직접 잡아 둘 것 (CS0029) |
 | 검증 통과 vs 빌드 통과 | 샌드박스에 .NET SDK·네트워크가 없어 **정적 검사만** 가능하다 (괄호 균형, 문서 주석 XML 파싱, 제네릭 불일치, XAML 유효성, JSON 키↔모델 대조) |
 
@@ -260,7 +262,7 @@ Alarm · Maintenance. 남은 큰 덩어리는 **S8 — SQLite 적재 + 트렌드
 
 ---
 
-## 10. 테스트 구성 (587건)
+## 10. 테스트 구성 (600건)
 
 **세는 규칙**: `[Fact]` 는 1건, `[Theory]` 는 `[InlineData]` 개수만큼 센다.
 종전 표는 메서드 수를 적어 두어 실제 실행 건수와 최대 23건까지 어긋나 있었다
@@ -284,7 +286,7 @@ Alarm · Maintenance. 남은 큰 덩어리는 **S8 — SQLite 적재 + 트렌드
 | `IoStatusViewModelTests.cs` | 16 | I/O 화면 판정 — 램프·DI 극성·압력 원시값 |
 | `AlarmEvaluatorTests.cs` | 15 | 알람 판정 |
 | `ConfigDocumentEditorTests.cs` | 15 | **device-map·recipe 주석 보존**(D21) + 공용 스캐너 |
-| `ControlConfigTests.cs` | 15 | **배포 `control.json`** — 값이 코드 기본값과 일치하는가(C5) |
+| `ControlConfigTests.cs` | 16 | **배포 `control.json`** — 값이 코드 기본값과 일치하는가(C5) |
 | `SnapshotHealthTests.cs` | 15 | 디바이스별 통신 상태 — 무응답/노후/미구성 구분 |
 | `AlarmEditorViewModelTests.cs` | 14 | 알람 화면 판단 — 파싱·압력룰 잠금·치명 확인 절차 |
 | `ManualControlTests.cs` | 14 | **수동 조작 관문** — 자동 운전 중·원점 복귀 전 거부, 영점 반영 |
@@ -293,8 +295,15 @@ Alarm · Maintenance. 남은 큰 덩어리는 **S8 — SQLite 적재 + 트렌드
 | `AlarmRuleSwapTests.cs` | 9 | **발생 상태 승계** — 저장이 Reset 을 대신하지 않을 것 |
 | `ClosedLoopSimulationTests.cs` | 8 | 폐루프 수렴 |
 | `TrendRowTests.cs` | 8 | 스냅샷 → 트렌드 행 — 열 순서, 품질 나쁜 값은 기록하지 않음(S8-a) |
+| `DataLoggerTests.cs` | 12 | **기록이 제어를 멈추지 않는가** — 큐 넘침 시 무대기·버린 수 집계, 종료 시 잔여 배출 |
 | `FaultRecoveryTests.cs` | 5 | **Fault 에서 나올 수 있는가**(D23) |
 | `PlcPointContractTests.cs` | 5 | **배포 `device-map.json` 의 PLC 키 ↔ 코드 조회 키 대조**(D19) |
+
+**알려진 검증 공백 1건.** `DataLogger` 의 **연속 실패 후 중단**(`LOG-01`) 경로는 자동
+테스트가 없습니다. 적재 실패를 재현하려면 파일 잠금이나 디스크 만료를 흉내내야 하는데,
+그런 테스트는 OS 사정에 따라 간헐적으로 실패합니다. **간헐적으로 실패하는 안전 테스트는
+없는 것보다 나쁩니다** — 사람이 결과를 믿지 않게 됩니다. 생성 단계 실패(`LOG-04`)는
+덮었고, 중단 판정은 코드 검토로만 확인했습니다.
 
 **통합 테스트가 배포 설정(`config/*.json`)을 그대로 읽습니다.**
 샘플을 따로 만들어 검증하면 배포본이 깨져도 테스트는 통과합니다.

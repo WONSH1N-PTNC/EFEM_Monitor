@@ -115,6 +115,18 @@ namespace Esam.Services
         /// </remarks>
         public bool AdvancePlantInRealTime { get; set; }
 
+        /// <summary>
+        /// 이 프로세스가 데이터 기록을 담당하는지 여부(조립 스위치). 기본 false.
+        /// </summary>
+        /// <remarks>
+        /// <para><c>logging.enabled</c>(운용 스위치)와 역할이 다르다. 저쪽은 "현장에서
+        /// 기록을 켤 것인가", 이쪽은 "이 프로세스가 기록을 담당하는가" 다.</para>
+        /// <para><b>기본값이 false 인 이유.</b> 런타임을 조립하는 테스트가 수백 건이다.
+        /// 켜 두면 그 전부가 임시 폴더가 아닌 작업 폴더에 DB 파일을 만든다.
+        /// 기록을 켜는 것은 실제 실행 경로(HmiHost)의 결정이다.</para>
+        /// </remarks>
+        public bool EnableDataLogging { get; set; }
+
         /// <summary>기본값으로 초기화한다.</summary>
         public RuntimeOptions()
         {
@@ -194,6 +206,9 @@ namespace Esam.Services
         /// <summary>진단 장애 처리 중 재진입을 막는다.</summary>
         private bool _handlingFault;
 
+        /// <summary>데이터 기록기. 기록을 담당하지 않는 조립에서는 null 이다.</summary>
+        private DataLogger _logger;
+
         private bool _disposed;
 
         private EsamRuntime()
@@ -231,6 +246,15 @@ namespace Esam.Services
         public IList<ModbusPortWorker> Workers
         {
             get { return _workers; }
+        }
+
+        /// <summary>
+        /// 데이터 기록기. 기록을 담당하지 않는 조립에서는 null 이다.
+        /// </summary>
+        /// <remarks>화면이 적재 통계(버린 건수·중단 여부)를 읽는 데 쓴다.</remarks>
+        public DataLogger Logger
+        {
+            get { return _logger; }
         }
 
         /// <summary>구성 경고 목록의 사본.</summary>
@@ -801,6 +825,41 @@ namespace Esam.Services
 
             // 안전 판정이 수행되지 못하거나 안전 지령이 닿지 않으면 SafeStop 으로 보낸다.
             runtime._diagnostics.FaultDetected += runtime.OnRuntimeFault;
+
+            // ── 6. 데이터 기록 ───────────────────────────────────────────────────
+            //
+            // 조립 스위치와 운용 스위치가 모두 켜져 있을 때만 만든다.
+            // 만들지 못해도 조립은 계속한다 — 기록 없이도 운전은 성립하고,
+            // 기록이 안 되는 사실은 경고로 드러나면 된다.
+            if (opts.EnableDataLogging && control.Logging != null && control.Logging.Enabled)
+            {
+                try
+                {
+                    runtime._logger = new DataLogger(
+                        control.Logging, runtime.AddWarning, resolvedClock);
+
+                    runtime._logger.AttachTo(runtime.Store, runtime.Alarms);
+                }
+                catch (Exception error)
+                {
+                    // 폴더를 만들 수 없거나 경로가 잘못된 경우다.
+                    // 여기서 던지면 프로그램이 뜨지 않아 설정을 고칠 방법도 없어진다.
+                    //
+                    // AttachTo 에서 실패했다면 로거는 이미 만들어져 있다.
+                    // 참조만 버리면 큐와 파일 핸들이 회수되지 않는다.
+                    if (runtime._logger != null)
+                    {
+                        runtime._logger.Dispose();
+                    }
+
+                    runtime._logger = null;
+
+                    runtime.AddWarning(ConfigWarning.Advisory(
+                        "LOG-04",
+                        "데이터 기록을 시작할 수 없습니다: " + error.Message,
+                        "control.json 의 logging.folder 경로와 쓰기 권한을 확인하십시오."));
+                }
+            }
 
             // 상태머신 반영은 이벤트가 아니라 폴링마다 상태를 대조해 수행한다(ReconcileInterlock).
             // 이벤트 구독은 이력·화면용으로만 남긴다.
@@ -1469,6 +1528,13 @@ namespace Esam.Services
         {
             ThrowIfDisposed();
 
+            // 폴링보다 먼저 시작한다. 뒤에 시작하면 첫 사이클의 스냅샷이
+            // 받는 사람 없이 발행되고, 그 한 건은 되찾을 수 없다.
+            if (_logger != null)
+            {
+                _logger.Start();
+            }
+
             foreach (ModbusPortWorker worker in _workers)
             {
                 // ★ 한 포트가 열리지 않아도 나머지는 시작한다.
@@ -1542,6 +1608,15 @@ namespace Esam.Services
             foreach (ModbusPortWorker worker in _workers)
             {
                 worker.Stop();
+            }
+
+            // ★ 폴링을 멈춘 뒤에 기록을 멈춘다.
+            //
+            // 먼저 멈추면 파킹 구간 — 밸브를 닫고 팬을 세운 마지막 몇 초 — 이
+            // 기록되지 않는다. 그 구간은 사고 분석에서 가장 먼저 보는 곳이다.
+            if (_logger != null)
+            {
+                _logger.Stop(3000);
             }
         }
 
@@ -1712,6 +1787,13 @@ namespace Esam.Services
             if (Engine != null)
             {
                 Engine.Dispose();
+            }
+
+            // Stop 이 이미 큐를 비웠다. 여기서는 파일과 스레드를 정리한다.
+            if (_logger != null)
+            {
+                _logger.Dispose();
+                _logger = null;
             }
         }
     }

@@ -86,6 +86,13 @@ namespace Esam.Hmi.Infrastructure
                 options.AlarmRulesPath = Path.Combine(ConfigFolder, "alarms.json");
                 options.RecipePath = Path.Combine(ConfigFolder, "recipe.json");
 
+                // ★ 기록을 담당하는 것은 이 실행 경로다.
+                //
+                // 조립 스위치를 기본 false 로 둔 이유는 런타임을 만드는 테스트가
+                // 수백 건이기 때문이다. 실제로 켜는 결정은 여기서 한 번만 한다.
+                // 켤지 말지는 control.json 의 logging.enabled 가 최종 판단한다.
+                options.EnableDataLogging = true;
+
                 // control.json 관련 경고를 배너에 싣는다. 기본값으로 도는 사실이
                 // 화면에 남지 않으면, 현장에서 값을 고쳤는데 반영되지 않는 원인을
                 // 찾을 단서가 없다.
